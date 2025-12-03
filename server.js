@@ -55,11 +55,16 @@ if (process.env.VERCEL === '1') {
   app.use(async (req, res, next) => {
     try {
       await ensureDBConnection();
+      next();
     } catch (error) {
       console.error('Database connection error:', error);
-      // Don't block request, but log error
+      // Return error response instead of blocking
+      return res.status(500).json({
+        success: false,
+        message: 'Database connection failed. Please check your MongoDB URI.',
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
     }
-    next();
   });
 }
 
