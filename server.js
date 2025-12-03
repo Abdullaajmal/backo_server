@@ -17,10 +17,37 @@ import settingsRoutes from './routes/settingsRoutes.js';
 // Load env vars
 dotenv.config();
 
-// Connect to database
-connectDB();
-
 const app = express();
+
+// Connect to database
+// In Vercel, we'll connect lazily on first request
+let dbConnectionPromise = null;
+
+const ensureDBConnection = async () => {
+  if (!dbConnectionPromise) {
+    dbConnectionPromise = connectDB().catch(err => {
+      console.error('DB connection failed:', err);
+      dbConnectionPromise = null; // Reset on failure
+      throw err;
+    });
+  }
+  return dbConnectionPromise;
+};
+
+// For Vercel, connect on first API request
+if (process.env.VERCEL === '1') {
+  app.use('/api', async (req, res, next) => {
+    try {
+      await ensureDBConnection();
+    } catch (error) {
+      console.error('Database connection error:', error);
+    }
+    next();
+  });
+} else {
+  // For local development, connect immediately
+  connectDB();
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
