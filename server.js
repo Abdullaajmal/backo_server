@@ -66,6 +66,7 @@ if (process.env.VERCEL === '1') {
       next();
     } catch (error) {
       console.error('Database connection error:', error);
+      console.error('MONGODB_URI:', process.env.MONGODB_URI ? 'Set' : 'Not set');
       // Return error response instead of blocking
       return res.status(500).json({
         success: false,
