@@ -34,18 +34,8 @@ const ensureDBConnection = async () => {
   return dbConnectionPromise;
 };
 
-// For Vercel, connect on first API request
-if (process.env.VERCEL === '1') {
-  app.use('/api', async (req, res, next) => {
-    try {
-      await ensureDBConnection();
-    } catch (error) {
-      console.error('Database connection error:', error);
-    }
-    next();
-  });
-} else {
-  // For local development, connect immediately
+// For local development, connect immediately
+if (process.env.VERCEL !== '1') {
   connectDB();
 }
 
@@ -59,6 +49,19 @@ app.use(express.urlencoded({ extended: true }));
 
 // Serve static files from uploads directory
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Database connection middleware for Vercel (must be before routes)
+if (process.env.VERCEL === '1') {
+  app.use(async (req, res, next) => {
+    try {
+      await ensureDBConnection();
+    } catch (error) {
+      console.error('Database connection error:', error);
+      // Don't block request, but log error
+    }
+    next();
+  });
+}
 
 // Routes
 app.use('/api/auth', authRoutes);
