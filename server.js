@@ -47,8 +47,10 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static files from uploads directory
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Serve static files from uploads directory (only in non-Vercel environments)
+if (process.env.VERCEL !== '1') {
+  app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+}
 
 // Database connection middleware for Vercel (must be before routes)
 // Only connect for API routes, not for health check

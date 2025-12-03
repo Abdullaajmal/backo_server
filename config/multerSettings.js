@@ -6,10 +6,14 @@ import fs from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Create uploads directory if it doesn't exist
+// Create uploads directory if it doesn't exist (only in non-Vercel environments)
 const uploadsDir = path.join(__dirname, '../uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+if (process.env.VERCEL !== '1' && !fs.existsSync(uploadsDir)) {
+  try {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  } catch (error) {
+    console.error('Failed to create uploads directory:', error);
+  }
 }
 
 // Configure storage
