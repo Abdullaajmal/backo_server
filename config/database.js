@@ -16,9 +16,18 @@ const connectDB = async () => {
 
     console.log('Attempting to connect to MongoDB...');
     console.log('MONGODB_URI exists:', !!process.env.MONGODB_URI);
-    console.log('MONGODB_URI starts with:', process.env.MONGODB_URI?.substring(0, 20));
+    console.log('MONGODB_URI length:', process.env.MONGODB_URI?.length);
+    console.log('MONGODB_URI starts with:', process.env.MONGODB_URI?.substring(0, 30));
+    
+    // Clean the connection string (remove any extra spaces or newlines)
+    const mongoUri = process.env.MONGODB_URI.trim();
+    
+    // Validate connection string format
+    if (!mongoUri.startsWith('mongodb://') && !mongoUri.startsWith('mongodb+srv://')) {
+      throw new Error(`Invalid MongoDB URI format. Must start with "mongodb://" or "mongodb+srv://". Got: ${mongoUri.substring(0, 30)}...`);
+    }
 
-    const conn = await mongoose.connect(process.env.MONGODB_URI, {
+    const conn = await mongoose.connect(mongoUri, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
       serverSelectionTimeoutMS: 10000, // 10 seconds timeout
