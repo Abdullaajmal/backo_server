@@ -51,8 +51,14 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Database connection middleware for Vercel (must be before routes)
+// Only connect for API routes, not for health check
 if (process.env.VERCEL === '1') {
   app.use(async (req, res, next) => {
+    // Skip DB connection for health check
+    if (req.path === '/api/health') {
+      return next();
+    }
+    
     try {
       await ensureDBConnection();
       next();
