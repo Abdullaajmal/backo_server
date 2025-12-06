@@ -5,12 +5,17 @@ import {
   updateStore,
   updateReturnPolicy,
   updateBranding,
+  getStoreByUrl,
 } from '../controllers/storeController.js';
 import { protect } from '../middleware/auth.js';
 import upload from '../config/multer.js';
 
 const router = express.Router();
 
+// Public routes (no authentication required)
+router.get('/public/store/:storeUrl', getStoreByUrl);
+
+// Protected routes (authentication required)
 router
   .route('/')
   .get(protect, getStore)

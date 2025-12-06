@@ -186,6 +186,82 @@ export const updateReturnPolicy = async (req, res) => {
   }
 };
 
+// @desc    Get store information by store URL (Public)
+// @route   GET /api/public/store/:storeUrl
+// @access  Public
+export const getStoreByUrl = async (req, res) => {
+  try {
+    let { storeUrl } = req.params;
+    storeUrl = decodeURIComponent(storeUrl);
+
+    // Try to find user by exact storeUrl match first
+    let user = await User.findOne({ storeUrl });
+
+    // If not found, try to match by domain (extract domain from storeUrl if it's a full URL)
+    if (!user) {
+      // Extract domain from stored storeUrl in database
+      const allUsers = await User.find({ isStoreSetup: true });
+      for (const u of allUsers) {
+        if (u.storeUrl) {
+          let storedUrl = u.storeUrl;
+          try {
+            // Extract domain from stored URL
+            if (storedUrl.includes('://')) {
+              const urlObj = new URL(storedUrl);
+              storedUrl = urlObj.hostname.replace('www.', '');
+            } else {
+              storedUrl = storedUrl.replace(/^https?:\/\//, '').replace(/^www\./, '');
+            }
+            
+            // Extract domain from requested URL
+            let requestedUrl = storeUrl;
+            if (requestedUrl.includes('://')) {
+              const urlObj2 = new URL(requestedUrl);
+              requestedUrl = urlObj2.hostname.replace('www.', '');
+            } else {
+              requestedUrl = requestedUrl.replace(/^https?:\/\//, '').replace(/^www\./, '');
+            }
+            
+            // Compare domains
+            if (storedUrl.toLowerCase() === requestedUrl.toLowerCase()) {
+              user = u;
+              break;
+            }
+          } catch (e) {
+            // If URL parsing fails, try direct match
+            if (storedUrl.toLowerCase().includes(storeUrl.toLowerCase()) || 
+                storeUrl.toLowerCase().includes(storedUrl.toLowerCase())) {
+              user = u;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    if (!user || !user.isStoreSetup) {
+      return res.status(404).json({
+        success: false,
+        message: 'Store not found',
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        storeName: user.storeName,
+        storeUrl: user.storeUrl,
+        storeLogo: user.storeLogo,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Server error',
+    });
+  }
+};
+
 // @desc    Update branding settings
 // @route   PUT /api/store/branding
 // @access  Private

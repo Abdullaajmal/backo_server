@@ -12,6 +12,14 @@ const returnSchema = new mongoose.Schema(
       ref: 'User',
       required: true,
     },
+    orderId: {
+      type: String,
+      required: true,
+    },
+    storeUrl: {
+      type: String,
+      required: true,
+    },
     customer: {
       name: {
         type: String,
@@ -20,6 +28,9 @@ const returnSchema = new mongoose.Schema(
       email: {
         type: String,
         required: true,
+      },
+      phone: {
+        type: String,
       },
     },
     product: {
@@ -30,6 +41,13 @@ const returnSchema = new mongoose.Schema(
       sku: {
         type: String,
       },
+      price: {
+        type: Number,
+      },
+      quantity: {
+        type: Number,
+        default: 1,
+      },
     },
     status: {
       type: String,
@@ -38,8 +56,13 @@ const returnSchema = new mongoose.Schema(
     },
     reason: {
       type: String,
-      enum: ['Wrong Size', 'Defective', 'Not as Described', 'Changed Mind', 'Damaged'],
+      enum: ['Wrong Size', 'Defective / Damaged', 'Not as Described', 'Changed Mind', 'Received Wrong Item', 'Other'],
       required: true,
+    },
+    preferredResolution: {
+      type: String,
+      enum: ['refund', 'exchange', 'store-credit'],
+      default: 'refund',
     },
     amount: {
       type: Number,
@@ -56,6 +79,21 @@ const returnSchema = new mongoose.Schema(
     notes: {
       type: String,
     },
+    photos: [{
+      type: String, // Path to uploaded file
+    }],
+    returnAddress: {
+      type: String,
+    },
+    timeline: [{
+      step: String,
+      date: Date,
+      description: String,
+      completed: {
+        type: Boolean,
+        default: false,
+      },
+    }],
   },
   {
     timestamps: true,
