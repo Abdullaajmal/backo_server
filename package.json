@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node server.js",
+<<<<<<< HEAD
     "dev": "nodemon server.js",
     "seed:orders": "node scripts/seedOrders.js",
     "seed:shopify": "node scripts/seedShopify.js",
@@ -31,8 +32,28 @@
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.0.3",
     "multer": "^1.4.5-lts.1"
+=======
+    "dev": "nodemon server.js"
+  },
+  "keywords": ["express", "mongodb", "api"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.18.2",
+    "mongoose": "^8.0.3",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express-validator": "^7.0.1"
+>>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
   }
 }
+<<<<<<< HEAD
+=======
+
+>>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb

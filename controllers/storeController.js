@@ -1,7 +1,10 @@
 import User from '../models/User.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
+<<<<<<< HEAD
 import { verifyShopifyConnection } from '../services/shopifyService.js';
+=======
+>>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -192,6 +195,7 @@ export const updateReturnPolicy = async (req, res) => {
 // @access  Public
 export const getStoreByUrl = async (req, res) => {
   try {
+<<<<<<< HEAD
     // Handle storeUrl from different sources
     // 1. From middleware (if using wildcard route)
     // 2. From req.params.storeUrl (if using named parameter)
@@ -326,11 +330,57 @@ export const getStoreByUrl = async (req, res) => {
             console.log(`✅ Match found by Shopify shopDomain! Store: ${u.storeName || u.email}`);
             user = u;
             break;
+=======
+    let { storeUrl } = req.params;
+    storeUrl = decodeURIComponent(storeUrl);
+
+    // Try to find user by exact storeUrl match first
+    let user = await User.findOne({ storeUrl });
+
+    // If not found, try to match by domain (extract domain from storeUrl if it's a full URL)
+    if (!user) {
+      // Extract domain from stored storeUrl in database
+      const allUsers = await User.find({ isStoreSetup: true });
+      for (const u of allUsers) {
+        if (u.storeUrl) {
+          let storedUrl = u.storeUrl;
+          try {
+            // Extract domain from stored URL
+            if (storedUrl.includes('://')) {
+              const urlObj = new URL(storedUrl);
+              storedUrl = urlObj.hostname.replace('www.', '');
+            } else {
+              storedUrl = storedUrl.replace(/^https?:\/\//, '').replace(/^www\./, '');
+            }
+            
+            // Extract domain from requested URL
+            let requestedUrl = storeUrl;
+            if (requestedUrl.includes('://')) {
+              const urlObj2 = new URL(requestedUrl);
+              requestedUrl = urlObj2.hostname.replace('www.', '');
+            } else {
+              requestedUrl = requestedUrl.replace(/^https?:\/\//, '').replace(/^www\./, '');
+            }
+            
+            // Compare domains
+            if (storedUrl.toLowerCase() === requestedUrl.toLowerCase()) {
+              user = u;
+              break;
+            }
+          } catch (e) {
+            // If URL parsing fails, try direct match
+            if (storedUrl.toLowerCase().includes(storeUrl.toLowerCase()) || 
+                storeUrl.toLowerCase().includes(storedUrl.toLowerCase())) {
+              user = u;
+              break;
+            }
+>>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
           }
         }
       }
     }
 
+<<<<<<< HEAD
     // If still not found, try matching by Shopify shopDomain
     if (!user) {
       console.log('❌ No match by storeUrl, trying Shopify shopDomain...');
@@ -404,11 +454,15 @@ export const getStoreByUrl = async (req, res) => {
         console.log(`   - User: ${u.email}, shopDomain: ${u.shopify?.shopDomain}, storeUrl: ${u.storeUrl}`);
       }
       
+=======
+    if (!user || !user.isStoreSetup) {
+>>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
       return res.status(404).json({
         success: false,
         message: 'Store not found',
       });
     }
+<<<<<<< HEAD
     
     // If user found but Shopify is connected, allow access even if isStoreSetup is false
     if (!user.isStoreSetup && !user.shopify?.isConnected) {
@@ -455,6 +509,18 @@ export const getStoreByUrl = async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Error in getStoreByUrl:', error);
+=======
+
+    res.json({
+      success: true,
+      data: {
+        storeName: user.storeName,
+        storeUrl: user.storeUrl,
+        storeLogo: user.storeLogo,
+      },
+    });
+  } catch (error) {
+>>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
     res.status(500).json({
       success: false,
       message: error.message || 'Server error',
@@ -517,6 +583,7 @@ export const updateBranding = async (req, res) => {
   }
 };
 
+<<<<<<< HEAD
 // @desc    Connect Shopify store
 // @route   POST /api/store/shopify/connect
 // @access  Private
@@ -664,3 +731,5 @@ export const getShopifyStatus = async (req, res) => {
   }
 };
 
+=======
+>>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb

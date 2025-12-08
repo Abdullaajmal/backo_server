@@ -188,6 +188,7 @@ export const createPublicReturn = async (req, res) => {
       preferredResolution = req.body.preferredResolution;
       amount = parseFloat(req.body.amount);
       notes = req.body.notes || '';
+<<<<<<< HEAD
       
       // Handle file uploads - check both req.files (array) and req.file (single)
       if (req.files && req.files.length > 0) {
@@ -204,6 +205,9 @@ export const createPublicReturn = async (req, res) => {
         });
         photos = [];
       }
+=======
+      photos = req.files ? req.files.map(file => `/uploads/${file.filename}`) : [];
+>>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
     } else {
       // JSON
       ({
@@ -233,6 +237,7 @@ export const createPublicReturn = async (req, res) => {
     }
     // If already full name, use as is
 
+<<<<<<< HEAD
     // Find user by storeUrl (with URL normalization - same as findOrder)
     const User = (await import('../models/User.js')).default;
     
@@ -268,6 +273,11 @@ export const createPublicReturn = async (req, res) => {
         }
       }
     }
+=======
+    // Find user by storeUrl
+    const User = (await import('../models/User.js')).default;
+    const user = await User.findOne({ storeUrl });
+>>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
 
     if (!user || !user.isStoreSetup) {
       return res.status(404).json({
@@ -392,6 +402,7 @@ export const findOrder = async (req, res) => {
   try {
     const { orderId, emailOrPhone, storeUrl } = req.body;
 
+<<<<<<< HEAD
     // Find user by storeUrl (with URL normalization)
     const User = (await import('../models/User.js')).default;
     
@@ -430,10 +441,16 @@ export const findOrder = async (req, res) => {
         }
       }
     }
+=======
+    // Find user by storeUrl
+    const User = (await import('../models/User.js')).default;
+    const user = await User.findOne({ storeUrl });
+>>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
 
     if (!user || !user.isStoreSetup) {
       return res.status(404).json({
         success: false,
+<<<<<<< HEAD
         message: 'Store not found. Please check the URL and try again.',
       });
     }
@@ -839,6 +856,42 @@ export const findOrder = async (req, res) => {
     }
   } catch (error) {
     console.error('❌ Error in findOrder:', error);
+=======
+        message: 'Store not found',
+      });
+    }
+
+    // Find order in database
+    const Order = (await import('../models/Order.js')).default;
+    let order = await Order.findOne({
+      orderNumber: orderId,
+      userId: user._id,
+      $or: [
+        { 'customer.email': emailOrPhone },
+        { 'customer.phone': emailOrPhone },
+      ],
+    });
+
+    // If order not found in DB, return error
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found. Please check your order ID and email/phone.',
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        orderNumber: order.orderNumber,
+        orderDate: order.placedDate,
+        items: order.items,
+        total: order.amount,
+        customer: order.customer,
+      },
+    });
+  } catch (error) {
+>>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
     res.status(500).json({
       success: false,
       message: error.message || 'Server error',

@@ -13,8 +13,11 @@ import returnRoutes from './routes/returnRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 import settingsRoutes from './routes/settingsRoutes.js';
+<<<<<<< HEAD
 import productRoutes from './routes/productRoutes.js';
 import { getStoreByUrl } from './controllers/storeController.js';
+=======
+>>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
 
 // Load env vars
 dotenv.config();
@@ -45,12 +48,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Middleware
+<<<<<<< HEAD
 app.use(cors({
   origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:5174', 'http://127.0.0.1:5173'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
+=======
+app.use(cors());
+>>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -86,6 +93,7 @@ if (process.env.VERCEL === '1') {
 
 // Routes
 app.use('/api/auth', authRoutes);
+<<<<<<< HEAD
 
 // Public store route - must be before /api/store to avoid conflict
 app.get('/api/public/store/*', (req, res, next) => {
@@ -114,6 +122,8 @@ app.get('/api/public/store/*', (req, res, next) => {
   next();
 }, getStoreByUrl);
 
+=======
+>>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
 app.use('/api/store', storeRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/orders', orderRoutes);
@@ -121,7 +131,10 @@ app.use('/api/returns', returnRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/settings', settingsRoutes);
+<<<<<<< HEAD
 app.use('/api/products', productRoutes);
+=======
+>>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
 
 // Root route
 app.get('/', (req, res) => {

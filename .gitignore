@@ -1,5 +1,6 @@
 node_modules/
 .env
+<<<<<<< HEAD
 .env.local
 .env.production
 uploads/
@@ -7,4 +8,9 @@ uploads/
 .DS_Store
 # Scripts with secrets (if needed locally, use .env instead)
 # scripts/seedShopify.js
+=======
+uploads/
+*.log
+.DS_Store
+>>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
 
