@@ -13,11 +13,7 @@ import returnRoutes from './routes/returnRoutes.js';
 import customerRoutes from './routes/customerRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 import settingsRoutes from './routes/settingsRoutes.js';
-<<<<<<< HEAD
 import productRoutes from './routes/productRoutes.js';
-import { getStoreByUrl } from './controllers/storeController.js';
-=======
->>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
 
 // Load env vars
 dotenv.config();
@@ -47,17 +43,36 @@ if (process.env.VERCEL !== '1') {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Middleware
-<<<<<<< HEAD
+// Middleware - CORS with dynamic origin support
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:5174', 'http://127.0.0.1:5173'],
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    const allowedOrigins = [
+      'http://localhost:5173',
+      'http://localhost:3000',
+      'http://localhost:5174',
+      'http://127.0.0.1:5173',
+      'https://backo-client.vercel.app',
+      'https://backo-client-git-main-abdullaajmal.vercel.app',
+    ];
+    
+    // Allow all Vercel preview deployments
+    if (origin.endsWith('.vercel.app')) {
+      return callback(null, true);
+    }
+    
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
-=======
-app.use(cors());
->>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -93,37 +108,6 @@ if (process.env.VERCEL === '1') {
 
 // Routes
 app.use('/api/auth', authRoutes);
-<<<<<<< HEAD
-
-// Public store route - must be before /api/store to avoid conflict
-app.get('/api/public/store/*', (req, res, next) => {
-  // Extract everything after /api/public/store/ from the path
-  let storeUrl = null;
-  
-  // Try to extract from path
-  const pathMatch = req.path.match(/\/public\/store\/(.+)$/);
-  if (pathMatch) {
-    storeUrl = pathMatch[1];
-  }
-  
-  // If not found, try from originalUrl
-  if (!storeUrl) {
-    const urlMatch = req.originalUrl.match(/\/public\/store\/(.+)$/);
-    if (urlMatch) {
-      storeUrl = urlMatch[1];
-    }
-  }
-  
-  if (storeUrl) {
-    req.storeUrlParam = storeUrl;
-    console.log('📥 [App Level] Extracted store URL from path:', storeUrl);
-  }
-  
-  next();
-}, getStoreByUrl);
-
-=======
->>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
 app.use('/api/store', storeRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/orders', orderRoutes);
@@ -131,10 +115,7 @@ app.use('/api/returns', returnRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/settings', settingsRoutes);
-<<<<<<< HEAD
 app.use('/api/products', productRoutes);
-=======
->>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
 
 // Root route
 app.get('/', (req, res) => {
