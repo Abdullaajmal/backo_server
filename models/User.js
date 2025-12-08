@@ -28,7 +28,6 @@ const userSchema = new mongoose.Schema(
     storeLogo: {
       type: String, // Path to uploaded file
     },
-<<<<<<< HEAD
     shopify: {
       shopDomain: {
         type: String,
@@ -51,8 +50,6 @@ const userSchema = new mongoose.Schema(
         default: false,
       },
     },
-=======
->>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
     isStoreSetup: {
       type: Boolean,
       default: false,

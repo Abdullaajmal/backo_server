@@ -2,7 +2,6 @@ import mongoose from 'mongoose';
 
 const orderSchema = new mongoose.Schema(
   {
-<<<<<<< HEAD
     shopifyOrderId: {
       type: String,
       unique: true,
@@ -13,12 +12,6 @@ const orderSchema = new mongoose.Schema(
       required: true,
       // Store normalized order number (without # prefix) to ensure consistency
       index: true, // Index for faster queries
-=======
-    orderNumber: {
-      type: String,
-      required: true,
-      unique: true,
->>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
     },
     userId: {
       type: mongoose.Schema.Types.ObjectId,

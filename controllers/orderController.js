@@ -1,20 +1,14 @@
 import Order from '../models/Order.js';
-<<<<<<< HEAD
 import User from '../models/User.js';
 import { fetchShopifyOrders, convertShopifyOrder, fetchShopifyCustomerById } from '../services/shopifyService.js';
 
 // @desc    Get all orders (Dynamically from Shopify, not from DB)
-=======
-
-// @desc    Get all orders
->>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
 // @route   GET /api/orders
 // @access  Private
 export const getOrders = async (req, res) => {
   try {
     const userId = req.user._id;
 
-<<<<<<< HEAD
     // Get user with Shopify credentials
     const user = await User.findById(userId).select('+shopify.accessToken');
     

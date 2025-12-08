@@ -1,10 +1,7 @@
 import User from '../models/User.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
-<<<<<<< HEAD
 import { verifyShopifyConnection } from '../services/shopifyService.js';
-=======
->>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
