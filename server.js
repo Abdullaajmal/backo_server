@@ -106,6 +106,28 @@ if (process.env.VERCEL === '1') {
   });
 }
 
+// API root route - helpful message
+app.get('/api', (req, res) => {
+  res.json({
+    success: true,
+    message: 'BACKO API Server is running',
+    version: '1.0.0',
+    endpoints: {
+      auth: '/api/auth',
+      store: '/api/store',
+      dashboard: '/api/dashboard',
+      orders: '/api/orders',
+      returns: '/api/returns',
+      customers: '/api/customers',
+      analytics: '/api/analytics',
+      settings: '/api/settings',
+      products: '/api/products',
+      health: '/api/health'
+    },
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/store', storeRoutes);
