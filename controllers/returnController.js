@@ -188,7 +188,6 @@ export const createPublicReturn = async (req, res) => {
       preferredResolution = req.body.preferredResolution;
       amount = parseFloat(req.body.amount);
       notes = req.body.notes || '';
-<<<<<<< HEAD
       
       // Handle file uploads - check both req.files (array) and req.file (single)
       if (req.files && req.files.length > 0) {
@@ -196,18 +195,8 @@ export const createPublicReturn = async (req, res) => {
       } else if (req.file) {
         photos = [`/uploads/${req.file.filename}`];
       } else {
-        // Check if photos are sent as FormData fields
-        const photoFiles = [];
-        Object.keys(req.body).forEach(key => {
-          if (key.startsWith('photo_') && req.body[key]) {
-            // This won't work for files in FormData, files come in req.files
-          }
-        });
         photos = [];
       }
-=======
-      photos = req.files ? req.files.map(file => `/uploads/${file.filename}`) : [];
->>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
     } else {
       // JSON
       ({

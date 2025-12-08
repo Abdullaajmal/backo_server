@@ -1,22 +1,14 @@
-<<<<<<< HEAD
 import Return from '../models/Return.js';
 import User from '../models/User.js';
 import { fetchShopifyCustomers, fetchShopifyOrders, fetchShopifyCustomerById } from '../services/shopifyService.js';
 
 // @desc    Get all customers (Dynamically from Shopify, not from DB)
-=======
-import Order from '../models/Order.js';
-import Return from '../models/Return.js';
-
-// @desc    Get all customers with aggregated data
->>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
 // @route   GET /api/customers
 // @access  Private
 export const getCustomers = async (req, res) => {
   try {
     const userId = req.user._id;
 
-<<<<<<< HEAD
     // Get user with Shopify credentials
     const user = await User.findById(userId).select('+shopify.accessToken');
     
