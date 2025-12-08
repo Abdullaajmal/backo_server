@@ -150,7 +150,32 @@ export const fetchShopifyProducts = async (shopDomain, accessToken) => {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Shopify API Error: ${response.status} - ${errorText}`);
+        let errorMessage = `Shopify API Error: ${response.status} - ${errorText}`;
+        
+        // Check for scope-related errors
+        if (response.status === 403) {
+          try {
+            const errorData = JSON.parse(errorText);
+            if (errorData.errors && typeof errorData.errors === 'string' && errorData.errors.includes('read_products')) {
+              errorMessage = `Shopify API Error: 403 - Access token ko 'read_products' scope ki permission nahi hai.\n\n` +
+                `Solution:\n` +
+                `1. Shopify Admin → Settings → Apps and sales channels → Develop apps\n` +
+                `2. Apni app select karo (ya nayi app create karo)\n` +
+                `3. "Configure Admin API scopes" section mein yeh scopes select karo:\n` +
+                `   ✅ read_products (Products read karne ke liye)\n` +
+                `   ✅ read_orders (Orders read karne ke liye)\n` +
+                `   ✅ read_customers (Customers read karne ke liye)\n` +
+                `4. "Save" karo\n` +
+                `5. "Install app" karo (agar pehle install nahi hai)\n` +
+                `6. Naya Admin API access token copy karo\n` +
+                `7. Settings page se Shopify ko disconnect karo aur phir naye token ke sath connect karo`;
+            }
+          } catch (e) {
+            // If parsing fails, use original error
+          }
+        }
+        
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
