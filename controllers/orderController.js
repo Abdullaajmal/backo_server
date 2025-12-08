@@ -334,27 +334,6 @@ export const syncShopifyOrders = async (req, res) => {
         updated: updatedCount,
         errors: errorCount,
       },
-=======
-    // Get all orders for this user
-    const orders = await Order.find({ userId })
-      .sort({ placedDate: -1 })
-      .select('-__v');
-
-    res.json({
-      success: true,
-      data: orders.map(order => ({
-        orderNumber: order.orderNumber,
-        customer: order.customer,
-        amount: order.amount,
-        paymentMethod: order.paymentMethod,
-        status: order.status,
-        placedDate: order.placedDate.toISOString().split('T')[0],
-        deliveredDate: order.deliveredDate 
-          ? order.deliveredDate.toISOString().split('T')[0] 
-          : null,
-        date: order.placedDate.toISOString().split('T')[0],
-      })),
->>>>>>> 84b8af3b1d14e60aac12946624e4d1c4ca9031fb
     });
   } catch (error) {
     res.status(500).json({
