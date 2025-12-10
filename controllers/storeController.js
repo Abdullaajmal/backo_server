@@ -914,6 +914,11 @@ export const connectWooCommercePortal = async (req, res) => {
       });
     }
 
+    // Generate webhook URL
+    const backendUrl = process.env.BACKEND_URL || process.env.API_URL || 
+                      `${req.protocol}://${req.get('host')}`;
+    const webhookUrl = `${backendUrl}/api/webhook/woocommerce/${user.wooCommerce?.secretKey || secretKey}`;
+
     res.json({
       success: true,
       data: {
@@ -921,6 +926,7 @@ export const connectWooCommercePortal = async (req, res) => {
           storeUrl: user.wooCommerce?.storeUrl || finalUrl,
           secretKey: user.wooCommerce?.secretKey || secretKey,
           isConnected: user.wooCommerce?.isConnected || true,
+          webhookUrl: webhookUrl,
         },
       },
       message: 'WooCommerce store connected successfully. Data will be fetched directly from WooCommerce API.',
@@ -1059,10 +1065,20 @@ export const getWooCommerceStatus = async (req, res) => {
     const storeUrl = user.wooCommerce?.storeUrl || '';
     const secretKey = user.wooCommerce?.secretKey || '';
     
+    // Generate webhook URL if connected via portal method
+    let webhookUrl = '';
+    if (isConnected && secretKey) {
+      // Get backend URL from environment or request
+      const backendUrl = process.env.BACKEND_URL || process.env.API_URL || 
+                        `${req.protocol}://${req.get('host')}`;
+      webhookUrl = `${backendUrl}/api/webhook/woocommerce/${secretKey}`;
+    }
+    
     let connectionStatus = { 
       isConnected,
       storeUrl: storeUrl || '',
-      secretKey: secretKey || ''
+      secretKey: secretKey || '',
+      webhookUrl: webhookUrl || ''
     };
 
     // Only verify if we have credentials - skip verification to avoid blocking
@@ -1071,6 +1087,7 @@ export const getWooCommerceStatus = async (req, res) => {
         isConnected: true,
         storeUrl: storeUrl,
         secretKey: secretKey,
+        webhookUrl: webhookUrl,
       };
     } else {
       // If not connected, make sure to set isConnected to false
@@ -1078,6 +1095,7 @@ export const getWooCommerceStatus = async (req, res) => {
         isConnected: false,
         storeUrl: '',
         secretKey: '',
+        webhookUrl: '',
       };
     }
 

@@ -14,6 +14,7 @@ import customerRoutes from './routes/customerRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 import settingsRoutes from './routes/settingsRoutes.js';
 import productRoutes from './routes/productRoutes.js';
+import webhookRoutes from './routes/webhookRoutes.js';
 
 // Load env vars
 dotenv.config();
@@ -132,6 +133,7 @@ app.get('/api', (req, res) => {
       analytics: '/api/analytics',
       settings: '/api/settings',
       products: '/api/products',
+      webhook: '/api/webhook',
       health: '/api/health'
     },
     timestamp: new Date().toISOString(),
@@ -148,6 +150,7 @@ app.use('/api/customers', customerRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/products', productRoutes);
+app.use('/api/webhook', webhookRoutes);
 
 // Root route
 app.get('/', (req, res) => {
