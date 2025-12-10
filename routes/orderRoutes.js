@@ -5,7 +5,7 @@ import {
   createOrder,
   updateOrder,
   deleteOrder,
-  syncShopifyOrders,
+  syncOrders,
   syncOrderFromPlugin,
 } from '../controllers/orderController.js';
 import { protect } from '../middleware/auth.js';
@@ -16,7 +16,7 @@ router.route('/')
   .get(protect, getOrders)
   .post(protect, createOrder);
 
-router.post('/sync', protect, syncShopifyOrders);
+router.post('/sync', protect, syncOrders);
 router.post('/sync-from-plugin', syncOrderFromPlugin); // Public route for plugin
 
 router.route('/:id')
