@@ -341,8 +341,8 @@ export const fetchWooCommerceProducts = async (storeUrl, consumerKey, consumerSe
     let hasMore = true;
 
     while (hasMore) {
-      // Fetch products with all necessary data - include all statuses (publish, draft, pending, etc.)
-      const url = `${cleanUrl}/wp-json/wc/v3/products?per_page=100&page=${page}`;
+      // Fetch products with all necessary data - include ALL statuses (publish, draft, pending, private, etc.)
+      const url = `${cleanUrl}/wp-json/wc/v3/products?per_page=100&page=${page}&status=any`;
       
       console.log(`📥 Fetching products from WooCommerce (page: ${page}): ${url}`);
       
