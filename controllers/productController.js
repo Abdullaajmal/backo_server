@@ -1,6 +1,5 @@
 import User from '../models/User.js';
 import Product from '../models/Product.js';
-import { fetchShopifyProducts } from '../services/shopifyService.js';
 import { fetchWooCommerceProducts, convertWooCommerceProduct } from '../services/woocommerceService.js';
 
 // Helper function to verify secret key and get user
@@ -17,7 +16,7 @@ const verifySecretKey = async (secretKey) => {
   return user;
 };
 
-// @desc    Get all products from WooCommerce or Shopify
+// @desc    Get all products from WooCommerce (API + Database)
 // @route   GET /api/products
 // @access  Private
 export const getProducts = async (req, res) => {
@@ -25,7 +24,7 @@ export const getProducts = async (req, res) => {
     const userId = req.user._id;
 
     // Get user with integration credentials (including secret key for portal method)
-    const user = await User.findById(userId).select('+shopify.accessToken +wooCommerce.consumerKey +wooCommerce.consumerSecret +wooCommerce.secretKey');
+    const user = await User.findById(userId).select('+wooCommerce.consumerKey +wooCommerce.consumerSecret +wooCommerce.secretKey');
     
     if (!user) {
       return res.status(404).json({
@@ -34,33 +33,22 @@ export const getProducts = async (req, res) => {
       });
     }
 
-    // Check if WooCommerce is connected (priority)
+    // Check if WooCommerce is connected
     // Support both methods: API (consumerKey/Secret) or Portal (secretKey)
     const isWooCommerceConnected = user?.wooCommerce?.isConnected && 
                                    user.wooCommerce.storeUrl &&
                                    ((user.wooCommerce.consumerKey && user.wooCommerce.consumerSecret) || 
                                     user.wooCommerce.secretKey);
     
-    // Check if Shopify is connected
-    const isShopifyConnected = user?.shopify?.isConnected && 
-                               user.shopify.shopDomain && 
-                               user.shopify.accessToken;
-    
-    // Fetch from WooCommerce if connected
-    if (isWooCommerceConnected) {
-      return await getWooCommerceProducts(req, res, user);
+    if (!isWooCommerceConnected) {
+      return res.status(400).json({
+        success: false,
+        message: 'No WooCommerce store connected. Please connect your WooCommerce store first in Settings.',
+      });
     }
     
-    // Otherwise fetch from Shopify if connected
-    if (isShopifyConnected) {
-      return await getShopifyProducts(req, res, user);
-    }
-    
-    // No store connected
-    return res.status(400).json({
-      success: false,
-      message: 'No store connected. Please connect your WooCommerce or Shopify store first in Settings.',
-    });
+    // Fetch from WooCommerce (API + DB)
+    return await getWooCommerceProducts(req, res, user);
   } catch (error) {
     console.error('Error fetching products:', error);
     res.status(500).json({
@@ -70,57 +58,114 @@ export const getProducts = async (req, res) => {
   }
 };
 
-// Helper function to get WooCommerce products
+// Helper function to get WooCommerce products (from API + Database)
 const getWooCommerceProducts = async (req, res, user) => {
   try {
-    // Always fetch directly from WooCommerce API - Consumer Key/Secret required
-    if (!user.wooCommerce.consumerKey || !user.wooCommerce.consumerSecret) {
-      return res.status(400).json({
-        success: false,
-        message: 'WooCommerce API credentials not found. Please connect using Consumer Key and Secret to fetch products directly from WordPress.',
-      });
+    let apiProducts = [];
+    let dbProducts = [];
+    
+    // Fetch from WooCommerce API if credentials available
+    if (user.wooCommerce.consumerKey && user.wooCommerce.consumerSecret) {
+      try {
+        console.log(`🔄 Fetching products from WooCommerce API (${user.wooCommerce.storeUrl})...`);
+        const wcProducts = await fetchWooCommerceProducts(
+          user.wooCommerce.storeUrl,
+          user.wooCommerce.consumerKey,
+          user.wooCommerce.consumerSecret
+        );
+        console.log(`📦 Fetched ${wcProducts.length} products from WooCommerce API`);
+        
+        // Format API products
+        apiProducts = wcProducts.map(product => {
+          const converted = convertWooCommerceProduct(product);
+          return {
+            id: converted.id,
+            title: converted.title,
+            handle: converted.handle,
+            vendor: converted.vendor,
+            productType: converted.productType,
+            status: converted.status,
+            tags: converted.tags,
+            variants: converted.variants,
+            images: converted.images,
+            createdAt: converted.createdAt,
+            updatedAt: converted.updatedAt,
+            price: converted.price,
+            sku: converted.sku,
+            inventoryQuantity: converted.inventoryQuantity,
+            source: 'api',
+          };
+        });
+      } catch (apiError) {
+        console.error('⚠️ Error fetching from WooCommerce API:', apiError.message);
+        // Continue with DB fetch even if API fails
+      }
     }
     
-    // Fetch products from WooCommerce API
-    console.log(`🔄 Fetching products from WooCommerce API (${user.wooCommerce.storeUrl})...`);
-    const wcProducts = await fetchWooCommerceProducts(
-      user.wooCommerce.storeUrl,
-      user.wooCommerce.consumerKey,
-      user.wooCommerce.consumerSecret
-    );
-    console.log(`📦 Fetched ${wcProducts.length} products from WooCommerce API`);
+    // Fetch from Database (webhook synced products)
+    try {
+      console.log(`🔄 Fetching products from Database (userId: ${user._id})...`);
+      const dbProductsData = await Product.find({ userId: user._id });
+      console.log(`📦 Fetched ${dbProductsData.length} products from Database`);
+      
+      // Format DB products
+      dbProducts = dbProductsData.map(product => ({
+        id: product.wooCommerceProductId || product.productId || product._id.toString(),
+        title: product.name || 'Untitled Product',
+        handle: product.sku || '',
+        vendor: '',
+        productType: 'simple',
+        status: product.status === 'publish' ? 'active' : 'draft',
+        tags: (product.tags || []).join(', '),
+        variants: [{
+          id: product.wooCommerceProductId || product.productId || product._id.toString(),
+          title: 'Default',
+          price: product.price?.toString() || '0',
+          sku: product.sku || '',
+          inventoryQuantity: product.stockQuantity || 0,
+          compareAtPrice: null,
+        }],
+        images: product.images || [],
+        createdAt: product.lastSyncedAt || product.createdAt || new Date().toISOString(),
+        updatedAt: product.lastSyncedAt || product.updatedAt || new Date().toISOString(),
+        price: product.price?.toString() || '0',
+        sku: product.sku || '',
+        inventoryQuantity: product.stockQuantity || 0,
+        source: 'database',
+      }));
+    } catch (dbError) {
+      console.error('⚠️ Error fetching from Database:', dbError.message);
+    }
     
-    // Format products for frontend - include all fields
-    const formattedProducts = wcProducts.map(product => {
-      const converted = convertWooCommerceProduct(product);
-      return {
-        id: converted.id,
-        title: converted.title,
-        handle: converted.handle,
-        vendor: converted.vendor,
-        productType: converted.productType,
-        status: converted.status,
-        tags: converted.tags,
-        variants: converted.variants,
-        images: converted.images,
-        createdAt: converted.createdAt,
-        updatedAt: converted.updatedAt,
-        price: converted.price,
-        sku: converted.sku,
-        inventoryQuantity: converted.inventoryQuantity,
-      };
+    // Merge products - API products take priority, then add unique DB products
+    const productMap = new Map();
+    
+    // Add API products first
+    apiProducts.forEach(product => {
+      productMap.set(product.id, product);
     });
-
-    console.log(`✅ Formatted ${formattedProducts.length} products for frontend`);
-    if (formattedProducts.length > 0) {
-      console.log(`📋 First product sample:`, JSON.stringify(formattedProducts[0], null, 2).substring(0, 500));
-    }
-
+    
+    // Add DB products that don't exist in API
+    dbProducts.forEach(product => {
+      if (!productMap.has(product.id)) {
+        productMap.set(product.id, product);
+      }
+    });
+    
+    const allProducts = Array.from(productMap.values());
+    
+    console.log(`✅ Total products: ${allProducts.length} (${apiProducts.length} from API, ${dbProducts.length} from DB)`);
+    
     res.json({
       success: true,
-      data: formattedProducts,
-      count: formattedProducts.length,
-      source: 'woocommerce_api',
+      data: allProducts,
+      count: allProducts.length,
+      source: 'woocommerce_api_and_db',
+      stats: {
+        fromApi: apiProducts.length,
+        fromDb: dbProducts.length,
+        total: allProducts.length,
+      },
     });
   } catch (error) {
     console.error('Error fetching WooCommerce products:', error);
@@ -131,54 +176,7 @@ const getWooCommerceProducts = async (req, res, user) => {
   }
 };
 
-// Helper function to get Shopify products
-const getShopifyProducts = async (req, res, user) => {
-  try {
-    // Fetch products from Shopify
-    console.log(`🔄 Fetching products from Shopify (${user.shopify.shopDomain})...`);
-    const shopifyProducts = await fetchShopifyProducts(user.shopify.shopDomain, user.shopify.accessToken);
-    console.log(`📦 Fetched ${shopifyProducts.length} products from Shopify`);
-    
-    // Format products for frontend
-    const formattedProducts = shopifyProducts.map(product => ({
-      id: product.id?.toString(),
-      title: product.title,
-      handle: product.handle,
-      vendor: product.vendor || '',
-      productType: product.product_type || '',
-      status: product.status,
-      tags: product.tags || '',
-      variants: (product.variants || []).map(variant => ({
-        id: variant.id?.toString(),
-        title: variant.title,
-        price: variant.price,
-        sku: variant.sku || '',
-        inventoryQuantity: variant.inventory_quantity || 0,
-        compareAtPrice: variant.compare_at_price || null,
-      })),
-      images: (product.images || []).map(image => ({
-        src: image.src,
-        alt: image.alt || product.title,
-      })),
-      createdAt: product.created_at,
-      updatedAt: product.updated_at,
-    }));
-
-    res.json({
-      success: true,
-      data: formattedProducts,
-      count: formattedProducts.length,
-    });
-  } catch (error) {
-    console.error('Error fetching Shopify products:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to fetch products from Shopify',
-    });
-  }
-};
-
-// @desc    Sync products from WooCommerce or Shopify
+// @desc    Sync products from WooCommerce
 // @route   POST /api/products/sync
 // @access  Private
 export const syncProducts = async (req, res) => {

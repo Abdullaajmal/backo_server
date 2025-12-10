@@ -4,7 +4,7 @@ import User from '../models/User.js';
 import { fetchShopifyCustomers, fetchShopifyOrders, fetchShopifyCustomerById } from '../services/shopifyService.js';
 import { fetchWooCommerceCustomers } from '../services/woocommerceService.js';
 
-// @desc    Get all customers (Dynamically from Shopify/WooCommerce or from DB for Portal method)
+// @desc    Get all customers from WooCommerce (API + Database)
 // @route   GET /api/customers
 // @access  Private
 export const getCustomers = async (req, res) => {
@@ -12,32 +12,24 @@ export const getCustomers = async (req, res) => {
     const userId = req.user._id;
 
     // Get user with integration credentials (including WooCommerce for portal method)
-    const user = await User.findById(userId).select('+shopify.accessToken +wooCommerce.consumerKey +wooCommerce.consumerSecret +wooCommerce.secretKey');
+    const user = await User.findById(userId).select('+wooCommerce.consumerKey +wooCommerce.consumerSecret +wooCommerce.secretKey');
     
-    // Check if WooCommerce is connected (priority - check first)
+    // Check if WooCommerce is connected
     const isWooCommerceConnected = user?.wooCommerce?.isConnected && 
                                    user.wooCommerce.storeUrl &&
                                    ((user.wooCommerce.consumerKey && user.wooCommerce.consumerSecret) || 
                                     user.wooCommerce.secretKey);
     
-    // Check if Shopify is connected
-    const isShopifyConnected = user?.shopify?.isConnected && 
-                               user.shopify.accessToken && 
-                               user.shopify.shopDomain;
-    
-    // Fetch from WooCommerce if connected (priority)
-    if (isWooCommerceConnected) {
-      return await getWooCommerceCustomers(req, res, user);
-    }
-    
-    // Otherwise fetch from Shopify
-    if (!isShopifyConnected) {
+    if (!isWooCommerceConnected) {
       return res.json({
         success: true,
         data: [],
-        message: 'No store connected. Please connect your WooCommerce or Shopify store first.',
+        message: 'No WooCommerce store connected. Please connect your WooCommerce store first.',
       });
     }
+    
+    // Fetch from WooCommerce (API + DB)
+    return await getWooCommerceCustomers(req, res, user);
 
     // Fetch customers directly from Shopify (real-time)
     console.log(`🔄 Fetching customers from Shopify (${user.shopify.shopDomain})...`);
@@ -404,41 +396,57 @@ export const getCustomers = async (req, res) => {
   }
 };
 
-// Helper function to get WooCommerce customers
+// Helper function to get WooCommerce customers (from API + Database)
 const getWooCommerceCustomers = async (req, res, user) => {
   try {
-    // Always fetch directly from WooCommerce API - Consumer Key/Secret required
-    if (!user.wooCommerce.consumerKey || !user.wooCommerce.consumerSecret) {
-      return res.status(400).json({
-        success: false,
-        message: 'WooCommerce API credentials not found. Please connect using Consumer Key and Secret to fetch customers directly from WordPress.',
-      });
+    let apiCustomers = [];
+    let apiOrders = [];
+    let dbOrders = [];
+    
+    // Fetch from WooCommerce API if credentials available
+    if (user.wooCommerce.consumerKey && user.wooCommerce.consumerSecret) {
+      try {
+        console.log(`🔄 Fetching customers from WooCommerce API (${user.wooCommerce.storeUrl})...`);
+        apiCustomers = await fetchWooCommerceCustomers(
+          user.wooCommerce.storeUrl,
+          user.wooCommerce.consumerKey,
+          user.wooCommerce.consumerSecret
+        );
+        console.log(`✅ Fetched ${apiCustomers.length} customers from WooCommerce API`);
+        
+        // Fetch orders for stats
+        const { fetchWooCommerceOrders } = await import('../services/woocommerceService.js');
+        apiOrders = await fetchWooCommerceOrders(
+          user.wooCommerce.storeUrl,
+          user.wooCommerce.consumerKey,
+          user.wooCommerce.consumerSecret
+        );
+        console.log(`✅ Fetched ${apiOrders.length} orders from WooCommerce API`);
+      } catch (apiError) {
+        console.error('⚠️ Error fetching from WooCommerce API:', apiError.message);
+      }
     }
     
-    console.log(`🔄 Fetching customers from WooCommerce API (${user.wooCommerce.storeUrl})...`);
-    const wcCustomers = await fetchWooCommerceCustomers(
-      user.wooCommerce.storeUrl,
-      user.wooCommerce.consumerKey,
-      user.wooCommerce.consumerSecret
-    );
-    console.log(`✅ Fetched ${wcCustomers.length} customers from WooCommerce API`);
+    // Fetch orders from Database (webhook synced orders)
+    try {
+      console.log(`🔄 Fetching orders from Database (userId: ${user._id})...`);
+      dbOrders = await Order.find({ userId: user._id });
+      console.log(`✅ Fetched ${dbOrders.length} orders from Database`);
+    } catch (dbError) {
+      console.error('⚠️ Error fetching from Database:', dbError.message);
+    }
     
-    // Fetch orders for stats
-    const { fetchWooCommerceOrders } = await import('../services/woocommerceService.js');
-    const wcOrders = await fetchWooCommerceOrders(
-      user.wooCommerce.storeUrl,
-      user.wooCommerce.consumerKey,
-      user.wooCommerce.consumerSecret
-    );
+    // Combine API and DB orders
+    const allOrders = [...apiOrders, ...dbOrders];
     
     // Get returns from database
-    const returns = await Return.find({ userId });
+    const returns = await Return.find({ userId: user._id });
     
     // Process customers similar to Shopify
     const customerMap = new Map();
     
-    // Process WooCommerce customers
-    wcCustomers.forEach(customer => {
+    // Process WooCommerce customers from API
+    apiCustomers.forEach(customer => {
       const customerEmail = (customer.email || '').toLowerCase();
       const key = customerEmail || customer.id?.toString() || `customer-${Date.now()}`;
       
@@ -464,8 +472,8 @@ const getWooCommerceCustomers = async (req, res, user) => {
       });
     });
     
-    // Process orders to calculate stats
-    wcOrders.forEach(order => {
+    // Process orders to calculate stats (from API + DB)
+    allOrders.forEach(order => {
       const customerEmail = (order.billing?.email || '').toLowerCase();
       const key = customerEmail || order.customer_id?.toString() || `order-${order.id}`;
       
