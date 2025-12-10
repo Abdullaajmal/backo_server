@@ -1,6 +1,5 @@
 import Order from '../models/Order.js';
 import User from '../models/User.js';
-import { fetchShopifyOrders, convertShopifyOrder, fetchShopifyCustomerById } from '../services/shopifyService.js';
 import { fetchWooCommerceOrders, convertWooCommerceOrder } from '../services/woocommerceService.js';
 
 // Helper function to verify secret key and get user
