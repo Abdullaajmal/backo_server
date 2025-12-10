@@ -73,54 +73,11 @@ export const getProducts = async (req, res) => {
 // Helper function to get WooCommerce products
 const getWooCommerceProducts = async (req, res, user) => {
   try {
-    // Check if using Portal method (secretKey only) or API method (consumerKey/Secret)
-    const isPortalMethod = user.wooCommerce.secretKey && !user.wooCommerce.consumerKey;
-    const isApiMethod = user.wooCommerce.consumerKey && user.wooCommerce.consumerSecret;
-    
-    // Portal method: Fetch products from our database (synced via WordPress plugin)
-    if (isPortalMethod) {
-      console.log(`🔄 Fetching products from database (Portal method) for user ${user._id}...`);
-      
-      // Fetch products from database
-      const dbProducts = await Product.find({ userId: user._id }).sort({ updatedAt: -1 });
-      console.log(`📦 Fetched ${dbProducts.length} products from database`);
-      
-      // Format products for frontend (match WooCommerce API format)
-      const formattedProducts = dbProducts.map(product => ({
-        id: product.productId || product.wooCommerceProductId,
-        title: product.name,
-        handle: product.name.toLowerCase().replace(/\s+/g, '-'),
-        vendor: '',
-        productType: product.categories?.[0] || '',
-        status: product.status || 'publish',
-        tags: product.tags || [],
-        variants: [{
-          id: product.productId || product.wooCommerceProductId,
-          title: 'Default',
-          price: product.price?.toString() || '0',
-          sku: product.sku || '',
-          inventoryQuantity: product.stockQuantity || 0,
-          compareAtPrice: null,
-        }],
-        images: product.images || [],
-        createdAt: product.createdAt,
-        updatedAt: product.updatedAt || product.lastSyncedAt,
-      }));
-
-      return res.json({
-        success: true,
-        data: formattedProducts,
-        count: formattedProducts.length,
-        source: 'database',
-        note: 'Products synced via WordPress plugin. Create/update products in WooCommerce to sync them here.',
-      });
-    }
-    
-    // API method: Fetch products directly from WooCommerce API
-    if (!isApiMethod) {
+    // Always fetch directly from WooCommerce API - Consumer Key/Secret required
+    if (!user.wooCommerce.consumerKey || !user.wooCommerce.consumerSecret) {
       return res.status(400).json({
         success: false,
-        message: 'WooCommerce API credentials not found. Please connect using Consumer Key and Secret to fetch products directly from WordPress, or use Portal method and install WordPress plugin to sync products.',
+        message: 'WooCommerce API credentials not found. Please connect using Consumer Key and Secret to fetch products directly from WordPress.',
       });
     }
     

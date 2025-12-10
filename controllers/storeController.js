@@ -829,13 +829,21 @@ export const connectWooCommerce = async (req, res) => {
 // @access  Private
 export const connectWooCommercePortal = async (req, res) => {
   try {
-    const { storeUrl } = req.body;
+    const { storeUrl, consumerKey, consumerSecret } = req.body;
     const userId = req.user._id;
 
     if (!storeUrl || !storeUrl.trim()) {
       return res.status(400).json({
         success: false,
         message: 'Store URL is required',
+      });
+    }
+
+    // Consumer Key/Secret required for direct WooCommerce API access
+    if (!consumerKey || !consumerSecret) {
+      return res.status(400).json({
+        success: false,
+        message: 'Consumer Key and Consumer Secret are required to fetch data directly from WooCommerce API.',
       });
     }
 
@@ -846,13 +854,29 @@ export const connectWooCommercePortal = async (req, res) => {
       cleanUrl = `https://${cleanUrl}`;
     }
 
-    // Generate secret key for plugin
+    // Verify WooCommerce connection with Consumer Key/Secret
+    const { verifyWooCommerceConnection } = await import('../services/woocommerceService.js');
+    const verification = await verifyWooCommerceConnection(cleanUrl, consumerKey, consumerSecret);
+    
+    if (!verification.success) {
+      return res.status(400).json({
+        success: false,
+        message: verification.error || 'Failed to connect to WooCommerce. Please check your credentials.',
+      });
+    }
+
+    // Use the cleaned URL from verification
+    const finalUrl = verification.storeUrl || cleanUrl.replace(/\/$/, '');
+
+    // Generate secret key for plugin (optional - for future plugin features)
     const secretKey = generatePortalSecretKey();
 
     // Disconnect Shopify if connected (only one store at a time)
-    // Update user with WooCommerce portal connection
+    // Update user with WooCommerce portal connection (with Consumer Key/Secret)
     const updateData = {
-      'wooCommerce.storeUrl': cleanUrl,
+      'wooCommerce.storeUrl': finalUrl,
+      'wooCommerce.consumerKey': consumerKey,
+      'wooCommerce.consumerSecret': consumerSecret,
       'wooCommerce.secretKey': secretKey,
       'wooCommerce.isConnected': true,
       // Disconnect Shopify
@@ -871,7 +895,7 @@ export const connectWooCommercePortal = async (req, res) => {
         runValidators: true,
         upsert: false
       }
-    ).select('+wooCommerce.secretKey');
+    ).select('+wooCommerce.consumerKey +wooCommerce.consumerSecret +wooCommerce.secretKey');
 
     // Verify update was successful
     if (!user) {
@@ -894,12 +918,12 @@ export const connectWooCommercePortal = async (req, res) => {
       success: true,
       data: {
         wooCommerce: {
-          storeUrl: user.wooCommerce?.storeUrl || cleanUrl,
+          storeUrl: user.wooCommerce?.storeUrl || finalUrl,
           secretKey: user.wooCommerce?.secretKey || secretKey,
           isConnected: user.wooCommerce?.isConnected || true,
         },
       },
-      message: 'WooCommerce store connected successfully. Use the secret key in your WordPress plugin.',
+      message: 'WooCommerce store connected successfully. Data will be fetched directly from WooCommerce API.',
     });
   } catch (error) {
     res.status(500).json({

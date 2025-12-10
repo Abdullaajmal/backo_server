@@ -407,104 +407,11 @@ export const getCustomers = async (req, res) => {
 // Helper function to get WooCommerce customers
 const getWooCommerceCustomers = async (req, res, user) => {
   try {
-    const userId = user._id;
-    
-    // Check if using Portal method (secretKey only) or API method (consumerKey/Secret)
-    const isPortalMethod = user.wooCommerce.secretKey && !user.wooCommerce.consumerKey;
-    const isApiMethod = user.wooCommerce.consumerKey && user.wooCommerce.consumerSecret;
-    
-    // Portal method: Extract customers from database orders (synced via WordPress plugin)
-    if (isPortalMethod) {
-      console.log(`🔄 Fetching customers from database orders (Portal method) for user ${userId}...`);
-      
-      // Fetch all orders from database
-      const dbOrders = await Order.find({ userId }).sort({ placedDate: -1 });
-      console.log(`📦 Found ${dbOrders.length} orders in database`);
-      
-      // Extract unique customers from orders
-      const customerMap = new Map();
-      
-      dbOrders.forEach(order => {
-        const customerEmail = (order.customer?.email || '').toLowerCase();
-        const key = customerEmail || order.customer?.name || `customer-${order._id}`;
-        
-        if (!customerMap.has(key)) {
-          customerMap.set(key, {
-            name: order.customer?.name || 'Guest',
-            email: order.customer?.email || '',
-            phone: order.customer?.phone || '',
-            address: order.shippingAddress || null,
-            totalOrders: 0,
-            totalReturns: 0,
-            orderAmounts: [],
-            createdAt: order.placedDate || order.createdAt,
-          });
-        }
-        
-        // Update stats
-        const customer = customerMap.get(key);
-        customer.totalOrders += 1;
-        customer.orderAmounts.push(order.amount || 0);
-      });
-      
-      // Get returns from database for return count
-      const returns = await Return.find({ userId });
-      returns.forEach(returnItem => {
-        const customerEmail = ((returnItem.customer?.email || '')).toLowerCase();
-        const key = customerEmail || returnItem.customer?.name;
-        if (key && customerMap.has(key)) {
-          customerMap.get(key).totalReturns += 1;
-        }
-      });
-      
-      // Calculate trust score and format customer data
-      const customers = Array.from(customerMap.values()).map(customer => {
-        const returnRate = customer.totalOrders > 0 
-          ? (customer.totalReturns / customer.totalOrders) * 100 
-          : customer.totalReturns > 0 ? 100 : 0;
-        
-        const avgOrderValue = customer.orderAmounts.length > 0
-          ? customer.orderAmounts.reduce((sum, val) => sum + val, 0) / customer.orderAmounts.length
-          : 0;
-
-        // Trust score calculation (0-100)
-        let trustScore = 50;
-        trustScore += Math.min(customer.totalOrders * 2, 30);
-        trustScore -= Math.min(returnRate * 0.3, 30);
-        const valueBonus = Math.min((avgOrderValue / 100) * 2, 20);
-        trustScore += valueBonus;
-        trustScore = Math.max(0, Math.min(100, Math.round(trustScore)));
-
-        return {
-          name: customer.name,
-          email: customer.email,
-          phone: customer.phone,
-          address: customer.address,
-          trustScore,
-          totalOrders: customer.totalOrders,
-          totalReturns: customer.totalReturns,
-          createdAt: customer.createdAt,
-        };
-      });
-
-      // Sort by name
-      customers.sort((a, b) => a.name.localeCompare(b.name));
-
-      console.log(`✅ Fetched ${customers.length} customers from database orders`);
-      
-      return res.json({
-        success: true,
-        data: customers,
-        source: 'database',
-        note: 'Customers extracted from orders synced via WordPress plugin.',
-      });
-    }
-    
-    // API method: Fetch customers directly from WooCommerce API
-    if (!isApiMethod) {
+    // Always fetch directly from WooCommerce API - Consumer Key/Secret required
+    if (!user.wooCommerce.consumerKey || !user.wooCommerce.consumerSecret) {
       return res.status(400).json({
         success: false,
-        message: 'WooCommerce API credentials not found. Please connect using Consumer Key and Secret to fetch customers directly from WordPress, or use Portal method and install WordPress plugin to sync orders.',
+        message: 'WooCommerce API credentials not found. Please connect using Consumer Key and Secret to fetch customers directly from WordPress.',
       });
     }
     

@@ -274,55 +274,11 @@ export const getOrders = async (req, res) => {
 // Helper function to get WooCommerce orders
 const getWooCommerceOrders = async (req, res, user) => {
   try {
-    // Check if using Portal method (secretKey only) or API method (consumerKey/Secret)
-    const isPortalMethod = user.wooCommerce.secretKey && !user.wooCommerce.consumerKey;
-    const isApiMethod = user.wooCommerce.consumerKey && user.wooCommerce.consumerSecret;
-    
-    // Portal method: Fetch orders from our database (synced via WordPress plugin)
-    if (isPortalMethod) {
-      console.log(`🔄 Fetching orders from database (Portal method) for user ${user._id}...`);
-      
-      // Fetch orders from database
-      const dbOrders = await Order.find({ userId: user._id }).sort({ placedDate: -1 });
-      console.log(`✅ Fetched ${dbOrders.length} orders from database`);
-      
-      // Format orders for frontend (match WooCommerce API format)
-      const formattedOrders = dbOrders.map(order => ({
-        _id: order._id.toString(),
-        id: order.wooCommerceOrderId || order.orderNumber,
-        orderNumber: order.orderNumber,
-        customer: {
-          name: order.customer.name,
-          email: order.customer.email,
-          phone: order.customer.phone || '',
-          firstName: order.customer.name?.split(' ')[0] || '',
-          lastName: order.customer.name?.split(' ').slice(1).join(' ') || '',
-        },
-        placedDate: order.placedDate ? new Date(order.placedDate).toISOString().split('T')[0] : null,
-        date: order.placedDate ? new Date(order.placedDate).toISOString().split('T')[0] : null,
-        deliveredDate: order.deliveredDate ? new Date(order.deliveredDate).toISOString().split('T')[0] : null,
-        amount: order.amount,
-        status: order.status,
-        paymentMethod: order.paymentMethod,
-        items: order.items || [],
-        shippingAddress: order.shippingAddress || {},
-        notes: order.notes || '',
-      }));
-
-      return res.json({
-        success: true,
-        data: formattedOrders,
-        message: `Fetched ${formattedOrders.length} orders from database`,
-        source: 'database',
-        note: 'Orders synced via WordPress plugin. Create orders in WooCommerce to sync them here.',
-      });
-    }
-    
-    // API method: Fetch orders directly from WooCommerce API
-    if (!isApiMethod) {
+    // Always fetch directly from WooCommerce API - Consumer Key/Secret required
+    if (!user.wooCommerce.consumerKey || !user.wooCommerce.consumerSecret) {
       return res.status(400).json({
         success: false,
-        message: 'WooCommerce API credentials not found. Please connect using Consumer Key and Secret to fetch orders directly from WordPress, or use Portal method and install WordPress plugin to sync orders.',
+        message: 'WooCommerce API credentials not found. Please connect using Consumer Key and Secret to fetch orders directly from WordPress.',
       });
     }
     
@@ -526,21 +482,11 @@ export const syncShopifyOrders = async (req, res) => {
 // Helper function to sync WooCommerce orders
 const syncWooCommerceOrders = async (req, res, user) => {
   try {
-    // Check if using portal method (secretKey) or API method (consumerKey/Secret)
-    if (user.wooCommerce.secretKey && !user.wooCommerce.consumerKey) {
-      // Portal method - orders come from plugin, check database for existing orders
-      const dbOrdersCount = await Order.countDocuments({ userId: user._id });
-      
-      return res.json({
-        success: true,
-        message: 'WooCommerce connected via portal method. Orders sync automatically from your WordPress plugin.',
-        data: {
-          totalWooCommerceOrders: dbOrdersCount,
-          synced: 0,
-          updated: 0,
-          errors: 0,
-          note: `You have ${dbOrdersCount} orders in database. Orders sync automatically when created/updated in WooCommerce. To sync all existing orders, go to WordPress Admin > Settings > BACKO and click "Manual Sync All Orders".`
-        },
+    // Always fetch from WooCommerce API - Consumer Key/Secret required
+    if (!user.wooCommerce.consumerKey || !user.wooCommerce.consumerSecret) {
+      return res.status(400).json({
+        success: false,
+        message: 'WooCommerce API credentials not found. Please connect using Consumer Key and Secret to sync orders directly from WordPress.',
       });
     }
     
