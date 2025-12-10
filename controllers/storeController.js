@@ -2,6 +2,8 @@ import User from '../models/User.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { verifyShopifyConnection } from '../services/shopifyService.js';
+import { verifyWooCommerceConnection } from '../services/woocommerceService.js';
+import { generatePortalSecretKey } from '../utils/generateSecretKey.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -556,11 +558,17 @@ export const connectShopify = async (req, res) => {
       });
     }
 
-    // Update user with Shopify credentials
+    // Disconnect WooCommerce if connected (only one store at a time)
     const updateData = {
       'shopify.shopDomain': cleanDomain,
       'shopify.accessToken': accessToken,
       'shopify.isConnected': true,
+      // Disconnect WooCommerce
+      'wooCommerce.isConnected': false,
+      'wooCommerce.storeUrl': '',
+      'wooCommerce.consumerKey': '',
+      'wooCommerce.consumerSecret': '',
+      'wooCommerce.secretKey': '',
     };
 
     if (apiKey) {
@@ -660,6 +668,401 @@ export const getShopifyStatus = async (req, res) => {
     });
   } catch (error) {
     console.error('Error getting Shopify status:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Server error',
+    });
+  }
+};
+
+// @desc    Disconnect Shopify store
+// @route   POST /api/store/shopify/disconnect
+// @access  Private
+export const disconnectShopify = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    // Update user to remove Shopify connection
+    const updateData = {
+      'shopify.isConnected': false,
+      'shopify.shopDomain': '',
+      'shopify.accessToken': '',
+      'shopify.apiKey': '',
+      'shopify.apiSecretKey': '',
+    };
+
+    const user = await User.findByIdAndUpdate(
+      userId, 
+      { $unset: { shopify: '' } }, // Remove entire shopify object
+      { 
+        new: true, 
+        runValidators: true,
+      }
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    // Set shopify to empty object if it doesn't exist
+    if (!user.shopify) {
+      user.shopify = {
+        isConnected: false,
+        shopDomain: '',
+      };
+      await user.save();
+    }
+
+    res.json({
+      success: true,
+      message: 'Shopify store disconnected successfully',
+      data: {
+        shopify: {
+          isConnected: false,
+          shopDomain: '',
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Error disconnecting Shopify:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Server error',
+    });
+  }
+};
+
+// @desc    Connect WooCommerce store
+// @route   POST /api/store/woocommerce/connect
+// @access  Private
+export const connectWooCommerce = async (req, res) => {
+  try {
+    const { storeUrl, consumerKey, consumerSecret } = req.body;
+    const userId = req.user._id;
+
+    if (!storeUrl || !consumerKey || !consumerSecret) {
+      return res.status(400).json({
+        success: false,
+        message: 'Store URL, Consumer Key, and Consumer Secret are required',
+      });
+    }
+
+    // Verify WooCommerce connection (URL cleaning is done inside the function)
+    const verification = await verifyWooCommerceConnection(storeUrl, consumerKey, consumerSecret);
+    
+    if (!verification.success) {
+      return res.status(400).json({
+        success: false,
+        message: verification.error || 'Failed to connect to WooCommerce. Please check your credentials.',
+      });
+    }
+    
+    // Use the cleaned URL from verification
+    const cleanUrl = verification.storeUrl || storeUrl.trim();
+
+    // Disconnect Shopify if connected (only one store at a time)
+    // Update user with WooCommerce credentials (use cleaned URL from verification)
+    const finalUrl = cleanUrl.replace(/\/$/, ''); // Ensure no trailing slash
+    const updateData = {
+      'wooCommerce.storeUrl': finalUrl,
+      'wooCommerce.consumerKey': consumerKey,
+      'wooCommerce.consumerSecret': consumerSecret,
+      'wooCommerce.isConnected': true,
+      // Disconnect Shopify
+      'shopify.isConnected': false,
+      'shopify.shopDomain': '',
+      'shopify.accessToken': '',
+      'shopify.apiKey': '',
+      'shopify.apiSecretKey': '',
+    };
+
+    const user = await User.findByIdAndUpdate(
+      userId, 
+      { $set: updateData },
+      { 
+        new: true, 
+        runValidators: true,
+        upsert: false
+      }
+    ).select('+wooCommerce.consumerKey +wooCommerce.consumerSecret');
+
+    // Verify update was successful
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    // Double-check the connection was saved
+    if (!user.wooCommerce || !user.wooCommerce.isConnected) {
+      console.error('WooCommerce connection not saved properly', user);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to save WooCommerce connection',
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        wooCommerce: {
+          storeUrl: user.wooCommerce?.storeUrl || finalUrl,
+          isConnected: user.wooCommerce?.isConnected || true,
+        },
+      },
+      message: 'WooCommerce store connected successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Server error',
+    });
+  }
+};
+
+// @desc    Connect WooCommerce store with portal (domain name only)
+// @route   POST /api/store/woocommerce/connect-portal
+// @access  Private
+export const connectWooCommercePortal = async (req, res) => {
+  try {
+    const { storeUrl } = req.body;
+    const userId = req.user._id;
+
+    if (!storeUrl || !storeUrl.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Store URL is required',
+      });
+    }
+
+    // Clean store URL
+    let cleanUrl = storeUrl.trim();
+    cleanUrl = cleanUrl.replace(/\/+$/, '');
+    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+      cleanUrl = `https://${cleanUrl}`;
+    }
+
+    // Generate secret key for plugin
+    const secretKey = generatePortalSecretKey();
+
+    // Disconnect Shopify if connected (only one store at a time)
+    // Update user with WooCommerce portal connection
+    const updateData = {
+      'wooCommerce.storeUrl': cleanUrl,
+      'wooCommerce.secretKey': secretKey,
+      'wooCommerce.isConnected': true,
+      // Disconnect Shopify
+      'shopify.isConnected': false,
+      'shopify.shopDomain': '',
+      'shopify.accessToken': '',
+      'shopify.apiKey': '',
+      'shopify.apiSecretKey': '',
+    };
+
+    const user = await User.findByIdAndUpdate(
+      userId, 
+      { $set: updateData },
+      { 
+        new: true, 
+        runValidators: true,
+        upsert: false
+      }
+    ).select('+wooCommerce.secretKey');
+
+    // Verify update was successful
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    // Double-check the connection was saved
+    if (!user.wooCommerce || !user.wooCommerce.isConnected) {
+      console.error('WooCommerce portal connection not saved properly', user);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to save WooCommerce connection',
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        wooCommerce: {
+          storeUrl: user.wooCommerce?.storeUrl || cleanUrl,
+          secretKey: user.wooCommerce?.secretKey || secretKey,
+          isConnected: user.wooCommerce?.isConnected || true,
+        },
+      },
+      message: 'WooCommerce store connected successfully. Use the secret key in your WordPress plugin.',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Server error',
+    });
+  }
+};
+
+// @desc    Disconnect WooCommerce store
+// @route   POST /api/store/woocommerce/disconnect
+// @access  Private
+export const disconnectWooCommerce = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    // Remove entire wooCommerce object first (similar to Shopify disconnect)
+    const user = await User.findByIdAndUpdate(
+      userId, 
+      { $unset: { wooCommerce: '' } }, // Remove entire wooCommerce object
+      { 
+        new: true, 
+        runValidators: true,
+      }
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    // Set wooCommerce to empty object structure (similar to Shopify)
+    if (!user.wooCommerce) {
+      user.wooCommerce = {
+        isConnected: false,
+        storeUrl: '',
+      };
+      await user.save();
+    }
+
+    res.json({
+      success: true,
+      message: 'WooCommerce store disconnected successfully',
+      data: {
+        wooCommerce: {
+          isConnected: false,
+          storeUrl: '',
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Error disconnecting WooCommerce:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Server error',
+    });
+  }
+};
+
+// @desc    Verify WooCommerce plugin connection (from WordPress plugin)
+// @route   POST /api/store/woocommerce/verify
+// @access  Public (with secret key)
+export const verifyWooCommercePlugin = async (req, res) => {
+  try {
+    const secretKey = req.headers['x-backo-secret-key'] || req.body.secretKey;
+    const { store_domain } = req.body;
+
+    if (!secretKey) {
+      return res.status(401).json({
+        success: false,
+        message: 'Secret key is required',
+      });
+    }
+
+    // Find user by secret key
+    const user = await User.findOne({ 
+      'wooCommerce.secretKey': secretKey,
+      'wooCommerce.isConnected': true 
+    }).select('+wooCommerce.secretKey');
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid secret key. Please check your secret key from BACKO portal.',
+      });
+    }
+
+    // Verify store domain matches (optional check)
+    if (store_domain) {
+      const userStoreUrl = user.wooCommerce?.storeUrl || '';
+      const userDomain = userStoreUrl.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      const providedDomain = store_domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      
+      if (userDomain && providedDomain && !userDomain.includes(providedDomain) && !providedDomain.includes(userDomain)) {
+        console.log(`⚠️ Domain mismatch: User domain: ${userDomain}, Provided: ${providedDomain}`);
+        // Don't fail, just log - allow connection
+      }
+    }
+
+    res.json({
+      success: true,
+      message: 'Connection verified successfully',
+      data: {
+        storeUrl: user.wooCommerce?.storeUrl || '',
+        connected: true,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Server error',
+    });
+  }
+};
+
+// @desc    Get WooCommerce connection status
+// @route   GET /api/store/woocommerce/status
+// @access  Private
+export const getWooCommerceStatus = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('+wooCommerce.consumerKey +wooCommerce.consumerSecret +wooCommerce.secretKey');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    const isConnected = user.wooCommerce?.isConnected || false;
+    const storeUrl = user.wooCommerce?.storeUrl || '';
+    const secretKey = user.wooCommerce?.secretKey || '';
+    
+    let connectionStatus = { 
+      isConnected,
+      storeUrl: storeUrl || '',
+      secretKey: secretKey || ''
+    };
+
+    // Only verify if we have credentials - skip verification to avoid blocking
+    if (isConnected && storeUrl) {
+      connectionStatus = {
+        isConnected: true,
+        storeUrl: storeUrl,
+        secretKey: secretKey,
+      };
+    } else {
+      // If not connected, make sure to set isConnected to false
+      connectionStatus = {
+        isConnected: false,
+        storeUrl: '',
+        secretKey: '',
+      };
+    }
+
+    res.json({
+      success: true,
+      data: connectionStatus,
+    });
+  } catch (error) {
+    console.error('Error getting WooCommerce status:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Server error',

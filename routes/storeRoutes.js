@@ -8,6 +8,12 @@ import {
   getStoreByUrl,
   connectShopify,
   getShopifyStatus,
+  disconnectShopify,
+  connectWooCommerce,
+  connectWooCommercePortal,
+  getWooCommerceStatus,
+  disconnectWooCommerce,
+  verifyWooCommercePlugin,
 } from '../controllers/storeController.js';
 import { protect } from '../middleware/auth.js';
 import upload from '../config/multer.js';
@@ -30,6 +36,14 @@ router.put('/branding', protect, updateBranding);
 // Shopify routes
 router.post('/shopify/connect', protect, connectShopify);
 router.get('/shopify/status', protect, getShopifyStatus);
+router.post('/shopify/disconnect', protect, disconnectShopify);
+
+// WooCommerce routes
+router.post('/woocommerce/connect', protect, connectWooCommerce);
+router.post('/woocommerce/connect-portal', protect, connectWooCommercePortal);
+router.get('/woocommerce/status', protect, getWooCommerceStatus);
+router.post('/woocommerce/disconnect', protect, disconnectWooCommerce);
+router.post('/woocommerce/verify', verifyWooCommercePlugin); // Public route for plugin verification
 
 export default router;
 

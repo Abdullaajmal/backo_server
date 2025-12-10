@@ -7,6 +7,11 @@ const orderSchema = new mongoose.Schema(
       unique: true,
       sparse: true,
     },
+    wooCommerceOrderId: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
     orderNumber: {
       type: String,
       required: true,

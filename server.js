@@ -46,7 +46,7 @@ const __dirname = path.dirname(__filename);
 // Middleware - CORS with dynamic origin support
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps, Postman, etc.)
+    // Allow requests with no origin (like mobile apps, Postman, WordPress plugins, etc.)
     if (!origin) return callback(null, true);
     
     const allowedOrigins = [
@@ -63,6 +63,16 @@ app.use(cors({
       return callback(null, true);
     }
     
+    // Allow WordPress origins (localhost WordPress installations)
+    if (origin.includes('localhost') || origin.includes('127.0.0.1') || origin.includes('wp-admin')) {
+      return callback(null, true);
+    }
+    
+    // Allow any HTTP/HTTPS origin in development (for WordPress plugin testing)
+    if (process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+    
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
@@ -71,7 +81,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Backo-Secret-Key'],
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

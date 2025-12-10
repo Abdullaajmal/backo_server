@@ -50,6 +50,28 @@ const userSchema = new mongoose.Schema(
         default: false,
       },
     },
+    wooCommerce: {
+      storeUrl: {
+        type: String,
+        trim: true,
+      },
+      consumerKey: {
+        type: String,
+        select: false, // Don't return by default
+      },
+      consumerSecret: {
+        type: String,
+        select: false,
+      },
+      secretKey: {
+        type: String,
+        select: false, // Portal generated secret key for plugin
+      },
+      isConnected: {
+        type: Boolean,
+        default: false,
+      },
+    },
     isStoreSetup: {
       type: Boolean,
       default: false,
