@@ -528,17 +528,18 @@ const syncWooCommerceOrders = async (req, res, user) => {
   try {
     // Check if using portal method (secretKey) or API method (consumerKey/Secret)
     if (user.wooCommerce.secretKey && !user.wooCommerce.consumerKey) {
-      // Portal method - orders come from plugin, not directly from WooCommerce API
-      // Return message that orders will sync automatically via plugin
+      // Portal method - orders come from plugin, check database for existing orders
+      const dbOrdersCount = await Order.countDocuments({ userId: user._id });
+      
       return res.json({
         success: true,
-        message: 'WooCommerce connected via portal method. Orders will sync automatically from your WordPress plugin when they are created or updated.',
+        message: 'WooCommerce connected via portal method. Orders sync automatically from your WordPress plugin.',
         data: {
-          totalWooCommerceOrders: 0,
+          totalWooCommerceOrders: dbOrdersCount,
           synced: 0,
           updated: 0,
           errors: 0,
-          note: 'Orders are synced automatically via WordPress plugin. No manual sync needed.'
+          note: `You have ${dbOrdersCount} orders in database. Orders sync automatically when created/updated in WooCommerce. To sync all existing orders, go to WordPress Admin > Settings > BACKO and click "Manual Sync All Orders".`
         },
       });
     }

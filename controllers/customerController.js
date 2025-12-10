@@ -1,23 +1,41 @@
 import Return from '../models/Return.js';
+import Order from '../models/Order.js';
 import User from '../models/User.js';
 import { fetchShopifyCustomers, fetchShopifyOrders, fetchShopifyCustomerById } from '../services/shopifyService.js';
+import { fetchWooCommerceCustomers } from '../services/woocommerceService.js';
 
-// @desc    Get all customers (Dynamically from Shopify, not from DB)
+// @desc    Get all customers (Dynamically from Shopify/WooCommerce or from DB for Portal method)
 // @route   GET /api/customers
 // @access  Private
 export const getCustomers = async (req, res) => {
   try {
     const userId = req.user._id;
 
-    // Get user with Shopify credentials
-    const user = await User.findById(userId).select('+shopify.accessToken');
+    // Get user with integration credentials (including WooCommerce for portal method)
+    const user = await User.findById(userId).select('+shopify.accessToken +wooCommerce.consumerKey +wooCommerce.consumerSecret +wooCommerce.secretKey');
+    
+    // Check if WooCommerce is connected (priority - check first)
+    const isWooCommerceConnected = user?.wooCommerce?.isConnected && 
+                                   user.wooCommerce.storeUrl &&
+                                   ((user.wooCommerce.consumerKey && user.wooCommerce.consumerSecret) || 
+                                    user.wooCommerce.secretKey);
     
     // Check if Shopify is connected
-    if (!user?.shopify?.isConnected || !user.shopify.accessToken || !user.shopify.shopDomain) {
+    const isShopifyConnected = user?.shopify?.isConnected && 
+                               user.shopify.accessToken && 
+                               user.shopify.shopDomain;
+    
+    // Fetch from WooCommerce if connected (priority)
+    if (isWooCommerceConnected) {
+      return await getWooCommerceCustomers(req, res, user);
+    }
+    
+    // Otherwise fetch from Shopify
+    if (!isShopifyConnected) {
       return res.json({
         success: true,
         data: [],
-        message: 'Shopify store not connected. Please connect your Shopify store first.',
+        message: 'No store connected. Please connect your WooCommerce or Shopify store first.',
       });
     }
 
@@ -386,7 +404,247 @@ export const getCustomers = async (req, res) => {
   }
 };
 
-// @desc    Get single customer details (from Shopify)
+// Helper function to get WooCommerce customers
+const getWooCommerceCustomers = async (req, res, user) => {
+  try {
+    const userId = user._id;
+    
+    // Check if using Portal method (secretKey only) or API method (consumerKey/Secret)
+    const isPortalMethod = user.wooCommerce.secretKey && !user.wooCommerce.consumerKey;
+    const isApiMethod = user.wooCommerce.consumerKey && user.wooCommerce.consumerSecret;
+    
+    // Portal method: Extract customers from database orders (synced via WordPress plugin)
+    if (isPortalMethod) {
+      console.log(`🔄 Fetching customers from database orders (Portal method) for user ${userId}...`);
+      
+      // Fetch all orders from database
+      const dbOrders = await Order.find({ userId }).sort({ placedDate: -1 });
+      console.log(`📦 Found ${dbOrders.length} orders in database`);
+      
+      // Extract unique customers from orders
+      const customerMap = new Map();
+      
+      dbOrders.forEach(order => {
+        const customerEmail = (order.customer?.email || '').toLowerCase();
+        const key = customerEmail || order.customer?.name || `customer-${order._id}`;
+        
+        if (!customerMap.has(key)) {
+          customerMap.set(key, {
+            name: order.customer?.name || 'Guest',
+            email: order.customer?.email || '',
+            phone: order.customer?.phone || '',
+            address: order.shippingAddress || null,
+            totalOrders: 0,
+            totalReturns: 0,
+            orderAmounts: [],
+            createdAt: order.placedDate || order.createdAt,
+          });
+        }
+        
+        // Update stats
+        const customer = customerMap.get(key);
+        customer.totalOrders += 1;
+        customer.orderAmounts.push(order.amount || 0);
+      });
+      
+      // Get returns from database for return count
+      const returns = await Return.find({ userId });
+      returns.forEach(returnItem => {
+        const customerEmail = ((returnItem.customer?.email || '')).toLowerCase();
+        const key = customerEmail || returnItem.customer?.name;
+        if (key && customerMap.has(key)) {
+          customerMap.get(key).totalReturns += 1;
+        }
+      });
+      
+      // Calculate trust score and format customer data
+      const customers = Array.from(customerMap.values()).map(customer => {
+        const returnRate = customer.totalOrders > 0 
+          ? (customer.totalReturns / customer.totalOrders) * 100 
+          : customer.totalReturns > 0 ? 100 : 0;
+        
+        const avgOrderValue = customer.orderAmounts.length > 0
+          ? customer.orderAmounts.reduce((sum, val) => sum + val, 0) / customer.orderAmounts.length
+          : 0;
+
+        // Trust score calculation (0-100)
+        let trustScore = 50;
+        trustScore += Math.min(customer.totalOrders * 2, 30);
+        trustScore -= Math.min(returnRate * 0.3, 30);
+        const valueBonus = Math.min((avgOrderValue / 100) * 2, 20);
+        trustScore += valueBonus;
+        trustScore = Math.max(0, Math.min(100, Math.round(trustScore)));
+
+        return {
+          name: customer.name,
+          email: customer.email,
+          phone: customer.phone,
+          address: customer.address,
+          trustScore,
+          totalOrders: customer.totalOrders,
+          totalReturns: customer.totalReturns,
+          createdAt: customer.createdAt,
+        };
+      });
+
+      // Sort by name
+      customers.sort((a, b) => a.name.localeCompare(b.name));
+
+      console.log(`✅ Fetched ${customers.length} customers from database orders`);
+      
+      return res.json({
+        success: true,
+        data: customers,
+        source: 'database',
+        note: 'Customers extracted from orders synced via WordPress plugin.',
+      });
+    }
+    
+    // API method: Fetch customers directly from WooCommerce API
+    if (!isApiMethod) {
+      return res.status(400).json({
+        success: false,
+        message: 'WooCommerce API credentials not found. Please connect using Consumer Key and Secret to fetch customers directly from WordPress, or use Portal method and install WordPress plugin to sync orders.',
+      });
+    }
+    
+    console.log(`🔄 Fetching customers from WooCommerce API (${user.wooCommerce.storeUrl})...`);
+    const wcCustomers = await fetchWooCommerceCustomers(
+      user.wooCommerce.storeUrl,
+      user.wooCommerce.consumerKey,
+      user.wooCommerce.consumerSecret
+    );
+    console.log(`✅ Fetched ${wcCustomers.length} customers from WooCommerce API`);
+    
+    // Fetch orders for stats
+    const { fetchWooCommerceOrders } = await import('../services/woocommerceService.js');
+    const wcOrders = await fetchWooCommerceOrders(
+      user.wooCommerce.storeUrl,
+      user.wooCommerce.consumerKey,
+      user.wooCommerce.consumerSecret
+    );
+    
+    // Get returns from database
+    const returns = await Return.find({ userId });
+    
+    // Process customers similar to Shopify
+    const customerMap = new Map();
+    
+    // Process WooCommerce customers
+    wcCustomers.forEach(customer => {
+      const customerEmail = (customer.email || '').toLowerCase();
+      const key = customerEmail || customer.id?.toString() || `customer-${Date.now()}`;
+      
+      const customerName = customer.first_name || customer.last_name
+        ? `${customer.first_name || ''} ${customer.last_name || ''}`.trim()
+        : customer.username || customer.email || 'Guest';
+      
+      customerMap.set(key, {
+        name: customerName,
+        email: customer.email || '',
+        phone: customer.billing?.phone || '',
+        address: customer.billing ? {
+          street: `${customer.billing.address_1 || ''} ${customer.billing.address_2 || ''}`.trim(),
+          city: customer.billing.city || '',
+          state: customer.billing.state || '',
+          zipCode: customer.billing.postcode || '',
+          country: customer.billing.country || '',
+        } : null,
+        totalOrders: 0,
+        totalReturns: 0,
+        orderAmounts: [],
+        createdAt: customer.date_created,
+      });
+    });
+    
+    // Process orders to calculate stats
+    wcOrders.forEach(order => {
+      const customerEmail = (order.billing?.email || '').toLowerCase();
+      const key = customerEmail || order.customer_id?.toString() || `order-${order.id}`;
+      
+      if (!customerMap.has(key)) {
+        const customerName = order.billing?.first_name || order.billing?.last_name
+          ? `${order.billing.first_name || ''} ${order.billing.last_name || ''}`.trim()
+          : order.billing?.email || 'Guest';
+        
+        customerMap.set(key, {
+          name: customerName,
+          email: order.billing?.email || '',
+          phone: order.billing?.phone || '',
+          address: order.billing ? {
+            street: `${order.billing.address_1 || ''} ${order.billing.address_2 || ''}`.trim(),
+            city: order.billing.city || '',
+            state: order.billing.state || '',
+            zipCode: order.billing.postcode || '',
+            country: order.billing.country || '',
+          } : null,
+          totalOrders: 0,
+          totalReturns: 0,
+          orderAmounts: [],
+          createdAt: order.date_created,
+        });
+      }
+      
+      const customer = customerMap.get(key);
+      customer.totalOrders += 1;
+      customer.orderAmounts.push(parseFloat(order.total || 0));
+    });
+    
+    // Process returns
+    returns.forEach(returnItem => {
+      const customerEmail = ((returnItem.customer?.email || '')).toLowerCase();
+      const key = customerEmail || returnItem.customer?.name;
+      if (key && customerMap.has(key)) {
+        customerMap.get(key).totalReturns += 1;
+      }
+    });
+    
+    // Calculate trust score and format
+    const customers = Array.from(customerMap.values()).map(customer => {
+      const returnRate = customer.totalOrders > 0 
+        ? (customer.totalReturns / customer.totalOrders) * 100 
+        : customer.totalReturns > 0 ? 100 : 0;
+      
+      const avgOrderValue = customer.orderAmounts.length > 0
+        ? customer.orderAmounts.reduce((sum, val) => sum + val, 0) / customer.orderAmounts.length
+        : 0;
+
+      let trustScore = 50;
+      trustScore += Math.min(customer.totalOrders * 2, 30);
+      trustScore -= Math.min(returnRate * 0.3, 30);
+      const valueBonus = Math.min((avgOrderValue / 100) * 2, 20);
+      trustScore += valueBonus;
+      trustScore = Math.max(0, Math.min(100, Math.round(trustScore)));
+
+      return {
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+        address: customer.address,
+        trustScore,
+        totalOrders: customer.totalOrders,
+        totalReturns: customer.totalReturns,
+        createdAt: customer.createdAt,
+      };
+    });
+
+    customers.sort((a, b) => a.name.localeCompare(b.name));
+    
+    return res.json({
+      success: true,
+      data: customers,
+      source: 'woocommerce_api',
+    });
+  } catch (error) {
+    console.error('❌ Error fetching WooCommerce customers:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch customers from WooCommerce',
+    });
+  }
+};
+
+// @desc    Get single customer details (from Shopify/WooCommerce)
 // @route   GET /api/customers/:email
 // @access  Private
 export const getCustomer = async (req, res) => {
