@@ -90,7 +90,7 @@ const getWooCommerceProducts = async (req, res, user) => {
     );
     console.log(`📦 Fetched ${wcProducts.length} products from WooCommerce API`);
     
-    // Format products for frontend
+    // Format products for frontend - include all fields
     const formattedProducts = wcProducts.map(product => {
       const converted = convertWooCommerceProduct(product);
       return {
@@ -105,8 +105,16 @@ const getWooCommerceProducts = async (req, res, user) => {
         images: converted.images,
         createdAt: converted.createdAt,
         updatedAt: converted.updatedAt,
+        price: converted.price,
+        sku: converted.sku,
+        inventoryQuantity: converted.inventoryQuantity,
       };
     });
+
+    console.log(`✅ Formatted ${formattedProducts.length} products for frontend`);
+    if (formattedProducts.length > 0) {
+      console.log(`📋 First product sample:`, JSON.stringify(formattedProducts[0], null, 2).substring(0, 500));
+    }
 
     res.json({
       success: true,

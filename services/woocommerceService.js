@@ -273,6 +273,7 @@ export const fetchWooCommerceOrders = async (storeUrl, consumerKey, consumerSecr
     let hasMore = true;
 
     while (hasMore) {
+      // Fetch all orders with any status
       const url = `${cleanUrl}/wp-json/wc/v3/orders?per_page=100&page=${page}&status=any`;
       
       console.log(`📥 Fetching orders from WooCommerce (page: ${page}): ${url}`);
@@ -340,9 +341,10 @@ export const fetchWooCommerceProducts = async (storeUrl, consumerKey, consumerSe
     let hasMore = true;
 
     while (hasMore) {
+      // Fetch products with all necessary data - include all statuses (publish, draft, pending, etc.)
       const url = `${cleanUrl}/wp-json/wc/v3/products?per_page=100&page=${page}`;
       
-      console.log(`📥 Fetching products from WooCommerce (page: ${page})...`);
+      console.log(`📥 Fetching products from WooCommerce (page: ${page}): ${url}`);
       
       // Create timeout controller
       const controller = new AbortController();
@@ -368,18 +370,67 @@ export const fetchWooCommerceProducts = async (storeUrl, consumerKey, consumerSe
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`WooCommerce API Error: ${response.status} - ${errorText}`);
+        let errorMessage = `WooCommerce API Error: ${response.status}`;
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.message || errorData.code || errorMessage;
+        } catch (e) {
+          errorMessage = `${errorMessage} - ${errorText.substring(0, 200)}`;
+        }
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
+      
+      // Fetch variations for variable products
+      for (const product of data) {
+        if (product.type === 'variable' && product.variations && product.variations.length > 0) {
+          try {
+            // Fetch variation details
+            const variationsData = [];
+            for (const variationId of product.variations.slice(0, 50)) { // Limit to 50 variations per product
+              try {
+                const variationUrl = `${cleanUrl}/wp-json/wc/v3/products/${product.id}/variations/${variationId}`;
+                const variationController = new AbortController();
+                const variationTimeout = setTimeout(() => variationController.abort(), 5000);
+                
+                const variationResponse = await fetch(variationUrl, {
+                  method: 'GET',
+                  headers: {
+                    'Authorization': `Basic ${credentials}`,
+                    'Content-Type': 'application/json',
+                  },
+                  signal: variationController.signal,
+                });
+                
+                clearTimeout(variationTimeout);
+                
+                if (variationResponse.ok) {
+                  const variationData = await variationResponse.json();
+                  variationsData.push(variationData);
+                }
+              } catch (variationError) {
+                console.error(`Error fetching variation ${variationId}:`, variationError.message);
+                // Continue with other variations
+              }
+            }
+            product.variations_data = variationsData;
+          } catch (variationFetchError) {
+            console.error(`Error fetching variations for product ${product.id}:`, variationFetchError.message);
+            product.variations_data = [];
+          }
+        }
+      }
+      
       allProducts = allProducts.concat(data);
       
       // Check if there are more pages
       const totalPages = parseInt(response.headers.get('x-wp-totalpages') || '1');
+      const totalItems = parseInt(response.headers.get('x-wp-total') || '0');
       hasMore = page < totalPages;
       page++;
       
-      console.log(`✅ Fetched ${data.length} products (total so far: ${allProducts.length})`);
+      console.log(`✅ Fetched ${data.length} products (page ${page - 1}/${totalPages}, total: ${allProducts.length}/${totalItems})`);
       
       // Safety limit
       if (allProducts.length >= 1000) {
@@ -407,9 +458,10 @@ export const fetchWooCommerceCustomers = async (storeUrl, consumerKey, consumerS
     let hasMore = true;
 
     while (hasMore) {
+      // Fetch customers with all statuses
       const url = `${cleanUrl}/wp-json/wc/v3/customers?per_page=100&page=${page}`;
       
-      console.log(`📥 Fetching customers from WooCommerce (page: ${page})...`);
+      console.log(`📥 Fetching customers from WooCommerce (page: ${page}): ${url}`);
       
       // Create timeout controller
       const controller = new AbortController();
@@ -435,7 +487,14 @@ export const fetchWooCommerceCustomers = async (storeUrl, consumerKey, consumerS
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`WooCommerce API Error: ${response.status} - ${errorText}`);
+        let errorMessage = `WooCommerce API Error: ${response.status}`;
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.message || errorData.code || errorMessage;
+        } catch (e) {
+          errorMessage = `${errorMessage} - ${errorText.substring(0, 200)}`;
+        }
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
@@ -443,10 +502,11 @@ export const fetchWooCommerceCustomers = async (storeUrl, consumerKey, consumerS
       
       // Check if there are more pages
       const totalPages = parseInt(response.headers.get('x-wp-totalpages') || '1');
+      const totalItems = parseInt(response.headers.get('x-wp-total') || '0');
       hasMore = page < totalPages;
       page++;
       
-      console.log(`✅ Fetched ${data.length} customers (total so far: ${allCustomers.length})`);
+      console.log(`✅ Fetched ${data.length} customers (page ${page - 1}/${totalPages}, total: ${allCustomers.length}/${totalItems})`);
       
       // Safety limit
       if (allCustomers.length >= 1000) {
@@ -501,40 +561,59 @@ export const convertWooCommerceOrder = (wcOrder) => {
 
 // Convert WooCommerce product to our format
 export const convertWooCommerceProduct = (wcProduct) => {
+  // Handle variants for variable products
+  let variants = [];
+  
+  if (wcProduct.type === 'variable' && wcProduct.variations_data && wcProduct.variations_data.length > 0) {
+    // Use fetched variation data
+    variants = wcProduct.variations_data.map((variation) => ({
+      id: variation.id?.toString(),
+      title: variation.attributes ? variation.attributes.map(attr => `${attr.name}: ${attr.option}`).join(', ') : 'Variant',
+      price: variation.price || variation.sale_price || wcProduct.price || '0',
+      sku: variation.sku || wcProduct.sku || '',
+      inventoryQuantity: variation.stock_quantity !== null && variation.stock_quantity !== undefined ? variation.stock_quantity : 0,
+      compareAtPrice: variation.regular_price || null,
+    }));
+  } else if (wcProduct.type === 'variable' && wcProduct.variations && wcProduct.variations.length > 0) {
+    // Fallback: use variation IDs if data not fetched
+    variants = wcProduct.variations.map((variationId, index) => ({
+      id: variationId?.toString() || `${wcProduct.id}_${index}`,
+      title: `Variant ${index + 1}`,
+      price: wcProduct.price || '0',
+      sku: wcProduct.sku || '',
+      inventoryQuantity: 0,
+      compareAtPrice: null,
+    }));
+  } else {
+    // Simple product - single variant
+    variants = [{
+      id: wcProduct.id?.toString(),
+      title: 'Default',
+      price: wcProduct.price || wcProduct.sale_price || wcProduct.regular_price || '0',
+      sku: wcProduct.sku || '',
+      inventoryQuantity: wcProduct.stock_quantity !== null && wcProduct.stock_quantity !== undefined ? wcProduct.stock_quantity : 0,
+      compareAtPrice: wcProduct.regular_price || null,
+    }];
+  }
+  
   return {
     id: wcProduct.id?.toString(),
     title: wcProduct.name || 'Untitled Product',
-    handle: wcProduct.slug || '',
-    vendor: '',
+    handle: wcProduct.slug || wcProduct.permalink?.split('/').filter(p => p).pop() || '',
+    vendor: wcProduct.vendor || '',
     productType: wcProduct.type || 'simple',
-    status: wcProduct.status === 'publish' ? 'active' : 'draft',
-    tags: wcProduct.tags ? wcProduct.tags.map(t => t.name).join(', ') : '',
-    variants: wcProduct.variations && wcProduct.variations.length > 0 
-      ? wcProduct.variations.map((variationId, index) => ({
-          id: variationId?.toString() || `${wcProduct.id}_${index}`,
-          title: wcProduct.variations_data?.[index]?.name || 'Variant',
-          price: wcProduct.variations_data?.[index]?.price || wcProduct.price || '0',
-          sku: wcProduct.variations_data?.[index]?.sku || wcProduct.sku || '',
-          inventoryQuantity: wcProduct.variations_data?.[index]?.stock_quantity || wcProduct.stock_quantity || 0,
-          compareAtPrice: wcProduct.variations_data?.[index]?.regular_price || null,
-        }))
-      : [{
-          id: wcProduct.id?.toString(),
-          title: 'Default',
-          price: wcProduct.price || '0',
-          sku: wcProduct.sku || '',
-          inventoryQuantity: wcProduct.stock_quantity || 0,
-          compareAtPrice: wcProduct.regular_price || null,
-        }],
+    status: wcProduct.status === 'publish' ? 'active' : wcProduct.status || 'draft',
+    tags: wcProduct.tags ? (Array.isArray(wcProduct.tags) ? wcProduct.tags.map(t => typeof t === 'string' ? t : t.name).join(', ') : '') : '',
+    variants: variants,
     images: wcProduct.images ? wcProduct.images.map(img => ({
       src: img.src || img.url || '',
       alt: img.alt || wcProduct.name || '',
     })) : [],
-    createdAt: wcProduct.date_created || '',
-    updatedAt: wcProduct.date_modified || wcProduct.date_created || '',
-    price: wcProduct.price || '0',
+    createdAt: wcProduct.date_created || new Date().toISOString(),
+    updatedAt: wcProduct.date_modified || wcProduct.date_created || new Date().toISOString(),
+    price: wcProduct.price || wcProduct.sale_price || wcProduct.regular_price || '0',
     sku: wcProduct.sku || '',
-    inventoryQuantity: wcProduct.stock_quantity || 0,
+    inventoryQuantity: wcProduct.stock_quantity !== null && wcProduct.stock_quantity !== undefined ? wcProduct.stock_quantity : 0,
   };
 };
 
