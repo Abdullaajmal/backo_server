@@ -1,6 +1,8 @@
+import mongoose from 'mongoose';
 import Order from '../models/Order.js';
 import User from '../models/User.js';
 import { fetchWooCommerceOrders, convertWooCommerceOrder } from '../services/woocommerceService.js';
+import { fetchShopifyOrders, convertShopifyOrder } from '../services/shopifyService.js';
 
 // Helper function to verify secret key and get user
 const verifySecretKey = async (secretKey) => {
@@ -16,95 +18,145 @@ const verifySecretKey = async (secretKey) => {
   return user;
 };
 
-// @desc    Get all orders from WooCommerce (API + Database)
+// @desc    Get all orders from Shopify or WooCommerce (API + Database)
 // @route   GET /api/orders
 // @access  Private
 export const getOrders = async (req, res) => {
   try {
     const userId = req.user._id;
 
-    // Get user with integration credentials (including secret key for portal method)
-    const user = await User.findById(userId).select('+wooCommerce.consumerKey +wooCommerce.consumerSecret +wooCommerce.secretKey');
+    // Get user with integration credentials (including Shopify and WooCommerce)
+    const user = await User.findById(userId).select('+shopify.accessToken +wooCommerce.consumerKey +wooCommerce.consumerSecret +wooCommerce.secretKey');
+    
+    // Check if Shopify is connected (priority)
+    const isShopifyConnected = user?.shopify?.isConnected && 
+                               user.shopify.shopDomain && 
+                               user.shopify.accessToken;
     
     // Check if WooCommerce is connected
-    // Support both methods: API (consumerKey/Secret) or Portal (secretKey)
     const isWooCommerceConnected = user?.wooCommerce?.isConnected && 
                                    user.wooCommerce.storeUrl &&
                                    ((user.wooCommerce.consumerKey && user.wooCommerce.consumerSecret) || 
                                     user.wooCommerce.secretKey);
     
-    if (!isWooCommerceConnected) {
-      return res.json({
-        success: true,
-        data: [],
-        message: 'No WooCommerce store connected. Please connect your WooCommerce store first.',
-      });
+    // Try Shopify first if connected
+    if (isShopifyConnected) {
+      return await getShopifyOrders(req, res, user);
     }
     
-    // Fetch from WooCommerce (API + DB)
-    return await getWooCommerceOrders(req, res, user);
+    // Otherwise try WooCommerce if connected
+    if (isWooCommerceConnected) {
+      return await getWooCommerceOrders(req, res, user);
+    }
+    
+    // No store connected
+    return res.json({
+      success: true,
+      data: [],
+      message: 'No store connected. Please connect your Shopify or WooCommerce store first.',
+    });
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch orders',
+    });
+  }
+};
 
-// Helper function to get WooCommerce orders
-const getWooCommerceOrders = async (req, res, user) => {
+// Helper function to get Shopify orders (from API + Database)
+const getShopifyOrders = async (req, res, user) => {
   try {
-    // Always fetch directly from WooCommerce API - Consumer Key/Secret required
-    if (!user.wooCommerce.consumerKey || !user.wooCommerce.consumerSecret) {
-      return res.status(400).json({
-        success: false,
-        message: 'WooCommerce API credentials not found. Please connect using Consumer Key and Secret to fetch orders directly from WordPress.',
-      });
-    }
+    let apiOrders = [];
+    let dbOrders = [];
     
-    // Fetch orders directly from WooCommerce API (real-time)
-    console.log(`🔄 Fetching orders from WooCommerce API: ${user.wooCommerce.storeUrl}`);
-    const wcOrders = await fetchWooCommerceOrders(
-      user.wooCommerce.storeUrl,
-      user.wooCommerce.consumerKey,
-      user.wooCommerce.consumerSecret
-    );
-    console.log(`✅ Fetched ${wcOrders.length} orders from WooCommerce API`);
-    
-        // Format API orders
-        apiOrders = wcOrders.map((wcOrder) => {
-          const converted = convertWooCommerceOrder(wcOrder);
-          return {
-            _id: wcOrder.id?.toString() || wcOrder.id,
-            orderNumber: converted.orderNumber,
-            customer: {
-              ...converted.customer,
-              name: converted.customer.name,
-              email: converted.customer.email,
-              phone: converted.customer.phone,
-              firstName: wcOrder.billing?.first_name || '',
-              lastName: wcOrder.billing?.last_name || '',
-            },
-            placedDate: converted.placedDate ? new Date(converted.placedDate).toISOString().split('T')[0] : null,
-            date: converted.placedDate ? new Date(converted.placedDate).toISOString().split('T')[0] : null,
-            deliveredDate: converted.deliveredDate ? new Date(converted.deliveredDate).toISOString().split('T')[0] : null,
-            amount: converted.amount,
-            status: converted.status,
-            paymentMethod: converted.paymentMethod,
-            items: converted.items,
-            shippingAddress: converted.shippingAddress,
-            notes: converted.notes,
-            source: 'api',
-          };
-        });
-      } catch (apiError) {
-        console.error('⚠️ Error fetching from WooCommerce API:', apiError.message);
-      }
-    }
-    
-    // Fetch from Database (webhook synced orders)
+    // Fetch from Shopify API
     try {
-      console.log(`🔄 Fetching orders from Database (userId: ${user._id})...`);
-      const dbOrdersData = await Order.find({ userId: user._id });
-      console.log(`✅ Fetched ${dbOrdersData.length} orders from Database`);
+      console.log(`🔄 Fetching orders from Shopify API (${user.shopify.shopDomain})...`);
+      const shopifyOrders = await fetchShopifyOrders(
+        user.shopify.shopDomain,
+        user.shopify.accessToken
+      );
+      console.log(`✅ Fetched ${shopifyOrders.length} orders from Shopify API`);
+      
+      // Format API orders AND save to database
+      apiOrders = [];
+      for (const shopifyOrder of shopifyOrders) {
+        const converted = convertShopifyOrder(shopifyOrder);
+        
+        // Save to database (only real Shopify orders)
+        try {
+          const orderData = {
+            shopifyOrderId: converted.shopifyOrderId,
+            orderNumber: converted.orderNumber,
+            userId: user._id,
+            customer: converted.customer,
+            items: converted.items,
+            amount: converted.amount,
+            paymentMethod: converted.paymentMethod,
+            status: converted.status,
+            placedDate: converted.placedDate,
+            deliveredDate: converted.deliveredDate,
+            shippingAddress: converted.shippingAddress,
+            notes: converted.notes || `Synced from Shopify API. Order ID: ${converted.shopifyOrderId}`,
+          };
+          
+          // Check if order already exists
+          const existingOrder = await Order.findOne({
+            $or: [
+              { shopifyOrderId: converted.shopifyOrderId },
+              { orderNumber: converted.orderNumber },
+            ],
+            userId: user._id,
+          });
+          
+          if (existingOrder) {
+            // Update existing order
+            await Order.findByIdAndUpdate(existingOrder._id, orderData, { new: true });
+            console.log(`  ✅ Updated order in DB: ${converted.orderNumber} (Shopify ID: ${converted.shopifyOrderId})`);
+          } else {
+            // Create new order
+            await Order.create(orderData);
+            console.log(`  ✅ Saved new order to DB: ${converted.orderNumber} (Shopify ID: ${converted.shopifyOrderId})`);
+          }
+        } catch (dbError) {
+          console.error(`  ⚠️ Error saving order ${converted.orderNumber} to DB:`, dbError.message);
+        }
+        
+        // Format for response
+        apiOrders.push({
+          _id: shopifyOrder.id?.toString() || shopifyOrder.id,
+          orderNumber: converted.orderNumber,
+          customer: converted.customer,
+          placedDate: converted.placedDate ? new Date(converted.placedDate).toISOString().split('T')[0] : null,
+          date: converted.placedDate ? new Date(converted.placedDate).toISOString().split('T')[0] : null,
+          deliveredDate: converted.deliveredDate ? new Date(converted.deliveredDate).toISOString().split('T')[0] : null,
+          amount: converted.amount,
+          status: converted.status,
+          paymentMethod: converted.paymentMethod,
+          items: converted.items,
+          shippingAddress: converted.shippingAddress,
+          notes: converted.notes,
+          source: 'api',
+        });
+      }
+    } catch (apiError) {
+      console.error('⚠️ Error fetching from Shopify API:', apiError.message);
+    }
+    
+    // Fetch from Database (ONLY synced orders with shopifyOrderId - NO fake orders)
+    try {
+      console.log(`🔄 Fetching synced orders from Database (userId: ${user._id})...`);
+      const dbOrdersData = await Order.find({ 
+        userId: user._id,
+        shopifyOrderId: { $exists: true, $ne: null, $ne: '' } // Only orders with Shopify ID
+      });
+      console.log(`✅ Fetched ${dbOrdersData.length} synced orders from Database`);
       
       // Format DB orders
       dbOrders = dbOrdersData.map(order => ({
         _id: order._id.toString(),
-        orderNumber: order.orderNumber || order.wooCommerceOrderId || '',
+        orderNumber: order.orderNumber || order.shopifyOrderId || '',
         customer: {
           name: order.customer?.name || 'Guest',
           email: order.customer?.email || '',
@@ -151,7 +203,180 @@ const getWooCommerceOrders = async (req, res, user) => {
       return dateB - dateA;
     });
 
-    console.log(`✅ Total orders: ${allOrders.length} (${apiOrders.length} from API, ${dbOrders.length} from DB)`);
+    console.log(`✅ Total orders: ${allOrders.length} (${apiOrders.length} from Shopify API, ${dbOrders.length} from DB)`);
+
+    res.json({
+      success: true,
+      data: allOrders,
+      message: `Fetched ${allOrders.length} orders`,
+      source: 'shopify_api_and_db',
+      stats: {
+        fromApi: apiOrders.length,
+        fromDb: dbOrders.length,
+        total: allOrders.length,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Error fetching orders from Shopify:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch orders from Shopify',
+    });
+  }
+};
+
+// Helper function to get WooCommerce orders
+const getWooCommerceOrders = async (req, res, user) => {
+  try {
+    let apiOrders = [];
+    let dbOrders = [];
+    
+    // Always fetch directly from WooCommerce API - Consumer Key/Secret required
+    if (user.wooCommerce.consumerKey && user.wooCommerce.consumerSecret) {
+      try {
+        // Fetch orders directly from WooCommerce API (real-time)
+        console.log(`🔄 Fetching orders from WooCommerce API: ${user.wooCommerce.storeUrl}`);
+        const wcOrders = await fetchWooCommerceOrders(
+          user.wooCommerce.storeUrl,
+          user.wooCommerce.consumerKey,
+          user.wooCommerce.consumerSecret
+        );
+        console.log(`✅ Fetched ${wcOrders.length} orders from WooCommerce API`);
+        
+        // Format API orders AND save to database
+        apiOrders = [];
+        for (const wcOrder of wcOrders) {
+          const converted = convertWooCommerceOrder(wcOrder);
+          
+          // Save to database (only real WooCommerce orders)
+          try {
+            const orderData = {
+              wooCommerceOrderId: converted.wooCommerceOrderId,
+              orderNumber: converted.orderNumber,
+              userId: user._id,
+              customer: converted.customer,
+              items: converted.items,
+              amount: converted.amount,
+              paymentMethod: converted.paymentMethod,
+              status: converted.status,
+              placedDate: converted.placedDate,
+              deliveredDate: converted.deliveredDate,
+              shippingAddress: converted.shippingAddress,
+              notes: converted.notes || `Synced from WooCommerce API. Order ID: ${converted.wooCommerceOrderId}`,
+            };
+            
+            // Check if order already exists
+            const existingOrder = await Order.findOne({
+              $or: [
+                { wooCommerceOrderId: converted.wooCommerceOrderId },
+                { orderNumber: converted.orderNumber },
+              ],
+              userId: user._id,
+            });
+            
+            if (existingOrder) {
+              // Update existing order
+              await Order.findByIdAndUpdate(existingOrder._id, orderData, { new: true });
+              console.log(`  ✅ Updated order in DB: ${converted.orderNumber} (WooCommerce ID: ${converted.wooCommerceOrderId})`);
+            } else {
+              // Create new order
+              await Order.create(orderData);
+              console.log(`  ✅ Saved new order to DB: ${converted.orderNumber} (WooCommerce ID: ${converted.wooCommerceOrderId})`);
+            }
+          } catch (dbError) {
+            console.error(`  ⚠️ Error saving order ${converted.orderNumber} to DB:`, dbError.message);
+          }
+          
+          // Format for response
+          apiOrders.push({
+            _id: wcOrder.id?.toString() || wcOrder.id,
+            orderNumber: converted.orderNumber,
+            customer: {
+              ...converted.customer,
+              name: converted.customer.name,
+              email: converted.customer.email,
+              phone: converted.customer.phone,
+              firstName: wcOrder.billing?.first_name || '',
+              lastName: wcOrder.billing?.last_name || '',
+            },
+            placedDate: converted.placedDate ? new Date(converted.placedDate).toISOString().split('T')[0] : null,
+            date: converted.placedDate ? new Date(converted.placedDate).toISOString().split('T')[0] : null,
+            deliveredDate: converted.deliveredDate ? new Date(converted.deliveredDate).toISOString().split('T')[0] : null,
+            amount: converted.amount,
+            status: converted.status,
+            paymentMethod: converted.paymentMethod,
+            items: converted.items,
+            shippingAddress: converted.shippingAddress,
+            notes: converted.notes,
+            source: 'api',
+          });
+        }
+      } catch (apiError) {
+        console.error('⚠️ Error fetching from WooCommerce API:', apiError.message);
+      }
+    }
+    
+    // Fetch from Database (ONLY webhook synced orders with wooCommerceOrderId - NO fake orders)
+    try {
+      console.log(`🔄 Fetching webhook-synced orders from Database (userId: ${user._id})...`);
+      // Only fetch orders that have wooCommerceOrderId (synced from webhook) - exclude fake/seeded orders
+      const dbOrdersData = await Order.find({ 
+        userId: user._id,
+        wooCommerceOrderId: { $exists: true, $ne: null, $ne: '' } // Only orders with WooCommerce ID
+      });
+      console.log(`✅ Fetched ${dbOrdersData.length} webhook-synced orders from Database`);
+      
+      // Format DB orders (only real WooCommerce orders from webhook)
+      dbOrders = dbOrdersData.map(order => ({
+        _id: order._id.toString(),
+        orderNumber: order.orderNumber || order.wooCommerceOrderId || '',
+        customer: {
+          name: order.customer?.name || 'Guest',
+          email: order.customer?.email || '',
+          phone: order.customer?.phone || '',
+        },
+        placedDate: order.placedDate ? new Date(order.placedDate).toISOString().split('T')[0] : null,
+        date: order.placedDate ? new Date(order.placedDate).toISOString().split('T')[0] : null,
+        deliveredDate: order.deliveredDate ? new Date(order.deliveredDate).toISOString().split('T')[0] : null,
+        amount: order.amount || 0,
+        status: order.status || 'Pending',
+        paymentMethod: order.paymentMethod || 'Prepaid',
+        items: order.items || [],
+        shippingAddress: order.shippingAddress || {},
+        notes: order.notes || '',
+        source: 'database',
+      }));
+    } catch (dbError) {
+      console.error('⚠️ Error fetching from Database:', dbError.message);
+    }
+    
+    // Merge orders - API orders take priority, then add unique webhook-synced DB orders
+    const orderMap = new Map();
+    
+    // Add API orders first (real-time from WooCommerce)
+    apiOrders.forEach(order => {
+      const key = order.orderNumber || order._id;
+      orderMap.set(key, order);
+    });
+    
+    // Add DB orders that don't exist in API (only webhook-synced orders with wooCommerceOrderId)
+    dbOrders.forEach(order => {
+      const key = order.orderNumber || order._id;
+      if (!orderMap.has(key)) {
+        orderMap.set(key, order);
+      }
+    });
+    
+    const allOrders = Array.from(orderMap.values());
+    
+    // Sort by placed date (newest first)
+    allOrders.sort((a, b) => {
+      const dateA = new Date(a.placedDate || 0);
+      const dateB = new Date(b.placedDate || 0);
+      return dateB - dateA;
+    });
+
+    console.log(`✅ Total orders: ${allOrders.length} (${apiOrders.length} from WooCommerce API, ${dbOrders.length} from webhook-synced DB)`);
 
     res.json({
       success: true,
@@ -325,7 +550,26 @@ export const getOrder = async (req, res) => {
     const userId = req.user._id;
     const orderId = req.params.id;
 
-    const order = await Order.findOne({ _id: orderId, userId });
+    // Check if orderId is a valid MongoDB ObjectId
+    const isValidObjectId = mongoose.Types.ObjectId.isValid(orderId) && 
+                            String(new mongoose.Types.ObjectId(orderId)) === orderId;
+
+    let order;
+    
+    if (isValidObjectId) {
+      // If it's a valid ObjectId, search by _id
+      order = await Order.findOne({ _id: orderId, userId });
+    } else {
+      // If it's not a valid ObjectId, search by orderNumber, shopifyOrderId, or wooCommerceOrderId
+      order = await Order.findOne({
+        userId,
+        $or: [
+          { orderNumber: orderId },
+          { shopifyOrderId: orderId },
+          { wooCommerceOrderId: orderId },
+        ],
+      });
+    }
 
     if (!order) {
       return res.status(404).json({
@@ -403,11 +647,34 @@ export const updateOrder = async (req, res) => {
       updateData.deliveredDate = new Date();
     }
 
-    const order = await Order.findOneAndUpdate(
-      { _id: orderId, userId },
-      updateData,
-      { new: true, runValidators: true }
-    );
+    // Check if orderId is a valid MongoDB ObjectId
+    const isValidObjectId = mongoose.Types.ObjectId.isValid(orderId) && 
+                            String(new mongoose.Types.ObjectId(orderId)) === orderId;
+
+    let order;
+    
+    if (isValidObjectId) {
+      // If it's a valid ObjectId, search by _id
+      order = await Order.findOneAndUpdate(
+        { _id: orderId, userId },
+        updateData,
+        { new: true, runValidators: true }
+      );
+    } else {
+      // If it's not a valid ObjectId, search by orderNumber, shopifyOrderId, or wooCommerceOrderId
+      order = await Order.findOneAndUpdate(
+        {
+          userId,
+          $or: [
+            { orderNumber: orderId },
+            { shopifyOrderId: orderId },
+            { wooCommerceOrderId: orderId },
+          ],
+        },
+        updateData,
+        { new: true, runValidators: true }
+      );
+    }
 
     if (!order) {
       return res.status(404).json({
@@ -437,7 +704,26 @@ export const deleteOrder = async (req, res) => {
     const userId = req.user._id;
     const orderId = req.params.id;
 
-    const order = await Order.findOneAndDelete({ _id: orderId, userId });
+    // Check if orderId is a valid MongoDB ObjectId
+    const isValidObjectId = mongoose.Types.ObjectId.isValid(orderId) && 
+                            String(new mongoose.Types.ObjectId(orderId)) === orderId;
+
+    let order;
+    
+    if (isValidObjectId) {
+      // If it's a valid ObjectId, search by _id
+      order = await Order.findOneAndDelete({ _id: orderId, userId });
+    } else {
+      // If it's not a valid ObjectId, search by orderNumber, shopifyOrderId, or wooCommerceOrderId
+      order = await Order.findOneAndDelete({
+        userId,
+        $or: [
+          { orderNumber: orderId },
+          { shopifyOrderId: orderId },
+          { wooCommerceOrderId: orderId },
+        ],
+      });
+    }
 
     if (!order) {
       return res.status(404).json({

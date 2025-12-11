@@ -12,7 +12,11 @@
     "dev": "nodemon server.js",
     "seed:orders": "node scripts/seedOrders.js",
     "seed:shopify": "node scripts/seedShopify.js",
-    "update:store-url": "node scripts/updateStoreUrl.js"
+    "update:store-url": "node scripts/updateStoreUrl.js",
+    "delete:fake-orders": "node scripts/deleteFakeOrders.js",
+    "delete:fake-returns": "node scripts/deleteFakeReturns.js",
+    "sync:all-woocommerce": "node scripts/syncAllWooCommerceData.js",
+    "sync:all-shopify": "node scripts/syncAllShopifyData.js"
   },
   "keywords": [
     "express",

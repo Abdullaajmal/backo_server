@@ -431,14 +431,22 @@ export const findOrder = async (req, res) => {
       });
     }
 
-    // Fetch order directly from Shopify (not from DB)
-    // Check if user has Shopify connected
-    const userWithShopify = await User.findById(user._id).select('+shopify.accessToken');
+    // Check which integrations are connected (Shopify or WooCommerce)
+    const userWithIntegrations = await User.findById(user._id)
+      .select('+shopify.accessToken +wooCommerce.consumerKey +wooCommerce.consumerSecret');
     
-    if (!userWithShopify?.shopify?.isConnected || !userWithShopify.shopify.shopDomain || !userWithShopify.shopify.accessToken) {
+    const hasShopify = userWithIntegrations?.shopify?.isConnected && 
+                       userWithIntegrations.shopify.shopDomain && 
+                       userWithIntegrations.shopify.accessToken;
+    
+    const hasWooCommerce = userWithIntegrations?.wooCommerce?.isConnected && 
+                           userWithIntegrations.wooCommerce.storeUrl &&
+                           (userWithIntegrations.wooCommerce.consumerKey && userWithIntegrations.wooCommerce.consumerSecret);
+    
+    if (!hasShopify && !hasWooCommerce) {
       return res.status(400).json({
         success: false,
-        message: 'Store does not have Shopify connected. Cannot find orders.',
+        message: 'Store does not have Shopify or WooCommerce connected. Cannot find orders. Please connect your store first.',
       });
     }
 
@@ -449,22 +457,115 @@ export const findOrder = async (req, res) => {
     const normalizedOrderId = orderId.replace(/^#/, ''); // Remove # if present
     const orderIdWithHash = orderId.startsWith('#') ? orderId : `#${orderId}`;
     
-    try {
-      // Import Shopify service
-      const { fetchShopifyOrders, convertShopifyOrder } = await import('../services/shopifyService.js');
-      
-      // Fetch all orders from Shopify (real-time)
-      console.log(`🔄 Fetching orders from Shopify for return portal (${userWithShopify.shopify.shopDomain})...`);
-      let shopifyOrders = await fetchShopifyOrders(
-        userWithShopify.shopify.shopDomain,
-        userWithShopify.shopify.accessToken
-      );
-      console.log(`📦 Fetched ${shopifyOrders.length} orders from Shopify`);
-      
-      // Enrich orders with customer details if email is missing (same as orderController)
-      console.log(`🔄 Enriching orders with customer details for return portal...`);
-      const { fetchShopifyCustomerById } = await import('../services/shopifyService.js');
-      const customerCache = new Map();
+    let foundOrder = null;
+    let orderSource = null;
+    
+    // Try Shopify first if connected
+    if (hasShopify) {
+      try {
+        console.log(`🔄 Trying to find order from Shopify...`);
+        foundOrder = await findOrderFromShopify(
+          userWithIntegrations,
+          orderId,
+          normalizedOrderId,
+          orderIdWithHash,
+          normalizedEmailOrPhone,
+          emailOrPhone
+        );
+        if (foundOrder) {
+          orderSource = 'shopify';
+          console.log(`✅ Order found from Shopify`);
+        }
+      } catch (shopifyError) {
+        console.error('❌ Error fetching order from Shopify:', shopifyError.message);
+        // If it's a validation error (email/phone mismatch or status), throw it
+        if (shopifyError.message.includes('Email or phone') || shopifyError.message.includes('currently')) {
+          throw shopifyError;
+        }
+        // Otherwise, continue to try WooCommerce if Shopify fails
+      }
+    }
+    
+    // Try WooCommerce if Shopify didn't find order or Shopify not connected
+    if (!foundOrder && hasWooCommerce) {
+      try {
+        console.log(`🔄 Trying to find order from WooCommerce...`);
+        foundOrder = await findOrderFromWooCommerce(
+          userWithIntegrations,
+          orderId,
+          normalizedOrderId,
+          orderIdWithHash,
+          normalizedEmailOrPhone,
+          emailOrPhone
+        );
+        if (foundOrder) {
+          orderSource = 'woocommerce';
+          console.log(`✅ Order found from WooCommerce`);
+        }
+      } catch (wooCommerceError) {
+        console.error('❌ Error fetching order from WooCommerce:', wooCommerceError.message);
+        // If it's a validation error (email/phone mismatch or status), throw it
+        if (wooCommerceError.message.includes('Email or phone') || wooCommerceError.message.includes('currently')) {
+          throw wooCommerceError;
+        }
+        // Otherwise, continue
+      }
+    }
+    
+    if (!foundOrder) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found. Please check your order number and try again. Make sure you enter the exact order number.',
+      });
+    }
+    
+    // Order found and validated (status check already done in helper functions), return it
+    // Format orderDate as ISO string for frontend
+    const orderDate = foundOrder.placedDate 
+      ? (foundOrder.placedDate instanceof Date 
+          ? foundOrder.placedDate.toISOString() 
+          : new Date(foundOrder.placedDate).toISOString())
+      : new Date().toISOString();
+    
+    res.json({
+      success: true,
+      data: {
+        orderNumber: foundOrder.orderNumber,
+        orderDate: orderDate, // ISO string format
+        items: foundOrder.items || [],
+        total: foundOrder.amount || 0,
+        customer: foundOrder.customer || {
+          name: 'Customer',
+          email: '',
+          phone: '',
+        },
+      },
+    });
+  } catch (error) {
+    console.error('❌ Error in findOrder:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Server error',
+    });
+  }
+};
+
+// Helper function to find order from Shopify
+const findOrderFromShopify = async (user, orderId, normalizedOrderId, orderIdWithHash, normalizedEmailOrPhone, emailOrPhone) => {
+  // Import Shopify service
+  const { fetchShopifyOrders, convertShopifyOrder, fetchShopifyCustomerById } = await import('../services/shopifyService.js');
+  
+  // Fetch all orders from Shopify (real-time)
+  console.log(`🔄 Fetching orders from Shopify for return portal (${user.shopify.shopDomain})...`);
+  let shopifyOrders = await fetchShopifyOrders(
+    user.shopify.shopDomain,
+    user.shopify.accessToken
+  );
+  console.log(`📦 Fetched ${shopifyOrders.length} orders from Shopify`);
+  
+  // Enrich orders with customer details if email is missing
+  console.log(`🔄 Enriching orders with customer details for return portal...`);
+  const customerCache = new Map();
       
       // CRITICAL: Enrich ALL orders with customer.id - ALWAYS enrich for return portal
       for (const order of shopifyOrders) {
@@ -488,8 +589,8 @@ export const findOrder = async (req, res) => {
               console.log(`      Current email in order: ${order.customer?.email || order.email || 'null'}`);
               try {
                 const customerDetails = await fetchShopifyCustomerById(
-                  userWithShopify.shopify.shopDomain,
-                  userWithShopify.shopify.accessToken,
+                  user.shopify.shopDomain,
+                  user.shopify.accessToken,
                   customerId
                 );
                 if (customerDetails) {
@@ -612,13 +713,9 @@ export const findOrder = async (req, res) => {
       });
       
       if (!shopifyOrder) {
-        console.log(`❌ Order not found: ${orderId}`);
+        console.log(`❌ Order not found in Shopify: ${orderId}`);
         console.log(`   Searched in ${shopifyOrders.length} orders`);
-        console.log(`   Sample order names:`, shopifyOrders.slice(0, 3).map(o => o.name));
-        return res.status(404).json({
-          success: false,
-          message: 'Order not found. Please check your order number and try again. Make sure you enter the exact order number (e.g., #1001 or 1001).',
-        });
+        return null; // Return null so WooCommerce can be tried
       }
 
       console.log(`✅ Order found: ${shopifyOrder.name}`);
@@ -642,8 +739,8 @@ export const findOrder = async (req, res) => {
         try {
           console.log(`   📧 Fetching customer details from Shopify Customer API...`);
           const customerDetails = await fetchShopifyCustomerById(
-            userWithShopify.shopify.shopDomain,
-            userWithShopify.shopify.accessToken,
+            user.shopify.shopDomain,
+            user.shopify.accessToken,
             customerId
           );
           
@@ -737,8 +834,8 @@ export const findOrder = async (req, res) => {
           console.log(`   🔄 Last attempt: Trying to fetch customer ${shopifyOrder.customer.id}...`);
           try {
             const lastTryCustomer = await fetchShopifyCustomerById(
-              userWithShopify.shopify.shopDomain,
-              userWithShopify.shopify.accessToken,
+              user.shopify.shopDomain,
+              user.shopify.accessToken,
               shopifyOrder.customer.id.toString()
             );
             if (lastTryCustomer?.email) {
@@ -790,13 +887,8 @@ export const findOrder = async (req, res) => {
       );
       
       if (!emailMatches && !phoneMatches) {
-        console.log(`❌ Email/Phone mismatch`);
-        console.log(`   Email match: ${emailMatches}`);
-        console.log(`   Phone match: ${phoneMatches}`);
-        return res.status(401).json({
-          success: false,
-          message: `Email or phone number does not match this order. Please verify your details. Order email: ${orderEmail || 'N/A'}, Phone: ${orderPhone || 'N/A'}`,
-        });
+        console.log(`❌ Email/Phone mismatch for Shopify order`);
+        throw new Error(`Email or phone number does not match this order. Please verify your details. Order email: ${orderEmail || 'N/A'}, Phone: ${orderPhone || 'N/A'}`);
       }
       
       console.log(`✅ Email/Phone verified!`);
@@ -806,36 +898,110 @@ export const findOrder = async (req, res) => {
       
       // Check if order is Delivered - only delivered orders can be returned
       if (convertedOrder.status !== 'Delivered') {
-        return res.status(400).json({
-          success: false,
-          message: `This order is currently ${convertedOrder.status}. Only delivered orders can be returned. Please wait until your order is delivered.`,
-        });
+        throw new Error(`This order is currently ${convertedOrder.status}. Only delivered orders can be returned. Please wait until your order is delivered.`);
       }
       
-      // Order found and validated, return it
-      res.json({
-        success: true,
-        data: {
-          orderNumber: convertedOrder.orderNumber,
-          orderDate: convertedOrder.placedDate,
-          items: convertedOrder.items,
-          total: convertedOrder.amount,
-          customer: convertedOrder.customer,
-        },
-      });
-    } catch (shopifyError) {
-      console.error('❌ Error fetching order from Shopify:', shopifyError);
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to fetch order from Shopify. Please try again later.',
-      });
+      // Return converted order
+      return convertedOrder;
+};
+
+// Helper function to find order from WooCommerce
+const findOrderFromWooCommerce = async (user, orderId, normalizedOrderId, orderIdWithHash, normalizedEmailOrPhone, emailOrPhone) => {
+  // Import WooCommerce service
+  const { fetchWooCommerceOrders, convertWooCommerceOrder } = await import('../services/woocommerceService.js');
+  
+  // Fetch all orders from WooCommerce (real-time)
+  console.log(`🔄 Fetching orders from WooCommerce for return portal (${user.wooCommerce.storeUrl})...`);
+  let wcOrders = await fetchWooCommerceOrders(
+    user.wooCommerce.storeUrl,
+    user.wooCommerce.consumerKey,
+    user.wooCommerce.consumerSecret
+  );
+  console.log(`📦 Fetched ${wcOrders.length} orders from WooCommerce`);
+  
+  // Find the order by order number (handle # prefix and order ID)
+  console.log(`🔍 Searching for order: ${orderId} (normalized: ${normalizedOrderId}, withHash: ${orderIdWithHash})`);
+  console.log(`📋 Total orders to search: ${wcOrders.length}`);
+  
+  // Clean input order ID for matching
+  const cleanOrderId = orderId.trim().replace(/^#/, '');
+  const cleanNormalized = normalizedOrderId.trim().replace(/^#/, '');
+  
+  const wcOrder = wcOrders.find(o => {
+    const wcOrderNumber = (o.number?.toString() || '').trim();
+    const wcOrderId = (o.id?.toString() || '').trim();
+    
+    // Try multiple matching patterns - case insensitive and flexible
+    const matches = (
+      // Order number matches
+      wcOrderNumber === orderId ||
+      wcOrderNumber === normalizedOrderId ||
+      wcOrderNumber === orderIdWithHash ||
+      wcOrderNumber === cleanOrderId ||
+      wcOrderNumber === cleanNormalized ||
+      wcOrderNumber.toLowerCase() === orderId.toLowerCase() ||
+      wcOrderNumber.toLowerCase() === normalizedOrderId.toLowerCase() ||
+      // ID matches
+      wcOrderId === orderId ||
+      wcOrderId === normalizedOrderId ||
+      wcOrderId === cleanOrderId ||
+      wcOrderId === cleanNormalized ||
+      wcOrderId.toLowerCase() === orderId.toLowerCase() ||
+      wcOrderId.toLowerCase() === normalizedOrderId.toLowerCase()
+    );
+    
+    if (matches) {
+      console.log(`✅ Found WooCommerce order match: ${wcOrderNumber} (ID: ${wcOrderId})`);
     }
-  } catch (error) {
-    console.error('❌ Error in findOrder:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Server error',
-    });
+    
+    return matches;
+  });
+  
+  if (!wcOrder) {
+    console.log(`❌ Order not found in WooCommerce: ${orderId}`);
+    console.log(`   Searched in ${wcOrders.length} orders`);
+    return null; // Return null so caller knows order not found
   }
+  
+  console.log(`✅ WooCommerce order found: ${wcOrder.number || wcOrder.id}`);
+  console.log(`   Order ID: ${wcOrder.id}`);
+  console.log(`   Customer Email: "${wcOrder.billing?.email || 'null'}"`);
+  console.log(`   Customer Phone: "${wcOrder.billing?.phone || 'null'}"`);
+  
+  // Get email and phone from WooCommerce order
+  const orderEmail = (wcOrder.billing?.email || '').toLowerCase().trim();
+  const orderPhone = (wcOrder.billing?.phone || '').trim();
+  
+  console.log(`🔍 Matching email/phone:`);
+  console.log(`   Order Email: ${orderEmail}`);
+  console.log(`   Order Phone: ${orderPhone}`);
+  console.log(`   Provided: ${normalizedEmailOrPhone}`);
+  
+  // Check if email/phone matches
+  const emailMatches = orderEmail && orderEmail === normalizedEmailOrPhone;
+  const phoneMatches = orderPhone && (
+    orderPhone === normalizedEmailOrPhone || 
+    orderPhone === emailOrPhone.trim() ||
+    orderPhone.replace(/\D/g, '') === emailOrPhone.trim().replace(/\D/g, '')
+  );
+  
+  if (!emailMatches && !phoneMatches) {
+    console.log(`❌ Email/Phone mismatch for WooCommerce order`);
+    throw new Error(`Email or phone number does not match this order. Please verify your details. Order email: ${orderEmail || 'N/A'}, Phone: ${orderPhone || 'N/A'}`);
+  }
+  
+  console.log(`✅ Email/Phone verified!`);
+  
+  // Convert WooCommerce order to our format
+  const convertedOrder = convertWooCommerceOrder(wcOrder);
+  
+  // Check if order is Delivered - only delivered orders can be returned
+  // WooCommerce "completed" status maps to "Delivered" in our system
+  if (convertedOrder.status !== 'Delivered') {
+    throw new Error(`This order is currently ${convertedOrder.status}. Only delivered orders can be returned. Please wait until your order is delivered.`);
+  }
+  
+  // Return converted order
+  return convertedOrder;
 };
 

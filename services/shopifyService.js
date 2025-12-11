@@ -338,6 +338,36 @@ export const verifyShopifyConnection = async (shopDomain, accessToken) => {
   }
 };
 
+// Convert Shopify product to our format
+export const convertShopifyProduct = (shopifyProduct) => {
+  return {
+    id: shopifyProduct.id?.toString(),
+    title: shopifyProduct.title || 'Untitled Product',
+    handle: shopifyProduct.handle || '',
+    vendor: shopifyProduct.vendor || '',
+    productType: shopifyProduct.product_type || 'simple',
+    status: shopifyProduct.status === 'active' ? 'active' : 'draft',
+    tags: shopifyProduct.tags || '',
+    variants: (shopifyProduct.variants || []).map(variant => ({
+      id: variant.id?.toString(),
+      title: variant.title || 'Default',
+      price: variant.price || '0',
+      sku: variant.sku || '',
+      inventoryQuantity: variant.inventory_quantity || 0,
+      compareAtPrice: variant.compare_at_price || null,
+    })),
+    images: (shopifyProduct.images || []).map(img => ({
+      src: img.src || '',
+      alt: img.alt || shopifyProduct.title || '',
+    })),
+    createdAt: shopifyProduct.created_at || new Date().toISOString(),
+    updatedAt: shopifyProduct.updated_at || shopifyProduct.created_at || new Date().toISOString(),
+    price: shopifyProduct.variants?.[0]?.price || '0',
+    sku: shopifyProduct.variants?.[0]?.sku || '',
+    inventoryQuantity: shopifyProduct.variants?.reduce((sum, v) => sum + (v.inventory_quantity || 0), 0) || 0,
+  };
+};
+
 // Convert Shopify order to our format
 export const convertShopifyOrder = (shopifyOrder) => {
   // Shopify order name format: "#1001" or "1001"
@@ -373,7 +403,7 @@ export const convertShopifyOrder = (shopifyOrder) => {
     })),
     amount: parseFloat(shopifyOrder.total_price || 0),
     paymentMethod: shopifyOrder.financial_status === 'pending' ? 'COD' : 'Prepaid',
-    status: mapShopifyStatusToOurStatus(shopifyOrder.fulfillment_status, shopifyOrder.financial_status, shopifyOrder.cancelled_at),
+    status: mapShopifyStatusToOurStatus(shopifyOrder.fulfillment_status, shopifyOrder.financial_status, shopifyOrder.cancelled_at, shopifyOrder.fulfillments),
     placedDate: new Date(shopifyOrder.created_at),
     deliveredDate: shopifyOrder.fulfillments?.[0]?.created_at ? new Date(shopifyOrder.fulfillments[0].created_at) : null,
     shippingAddress: shopifyOrder.shipping_address ? {
@@ -389,11 +419,23 @@ export const convertShopifyOrder = (shopifyOrder) => {
 };
 
 // Map Shopify status to our status
-const mapShopifyStatusToOurStatus = (fulfillmentStatus, financialStatus, cancelledAt) => {
+const mapShopifyStatusToOurStatus = (fulfillmentStatus, financialStatus, cancelledAt, fulfillments) => {
   if (cancelledAt) {
     return 'Cancelled';
   }
   
+  // Check if order has fulfillments (even if fulfillment_status is null/unfulfilled)
+  // If fulfillments exist and have status 'success', consider it delivered
+  if (fulfillments && Array.isArray(fulfillments) && fulfillments.length > 0) {
+    const hasSuccessfulFulfillment = fulfillments.some(f => 
+      f.status === 'success' || f.status === 'open' || !f.status
+    );
+    if (hasSuccessfulFulfillment) {
+      return 'Delivered';
+    }
+  }
+  
+  // Check fulfillment_status
   if (fulfillmentStatus === 'fulfilled') {
     return 'Delivered';
   }
@@ -403,6 +445,12 @@ const mapShopifyStatusToOurStatus = (fulfillmentStatus, financialStatus, cancell
   }
   
   if (financialStatus === 'pending' || financialStatus === 'authorized') {
+    return 'Processing';
+  }
+  
+  // If order is paid and has no fulfillment status, check if it's been some time
+  // For now, default to Processing if paid
+  if (financialStatus === 'paid') {
     return 'Processing';
   }
   

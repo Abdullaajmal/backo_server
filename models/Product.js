@@ -11,6 +11,10 @@ const productSchema = new mongoose.Schema(
       type: String,
       index: true,
     },
+    shopifyProductId: {
+      type: String,
+      index: true,
+    },
     productId: {
       type: String,
       required: true,
@@ -57,6 +61,7 @@ const productSchema = new mongoose.Schema(
 
 // Index for faster queries
 productSchema.index({ userId: 1, wooCommerceProductId: 1 });
+productSchema.index({ userId: 1, shopifyProductId: 1 });
 productSchema.index({ userId: 1, productId: 1 });
 
 export default mongoose.model('Product', productSchema);

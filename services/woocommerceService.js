@@ -373,9 +373,18 @@ export const fetchWooCommerceProducts = async (storeUrl, consumerKey, consumerSe
         let errorMessage = `WooCommerce API Error: ${response.status}`;
         try {
           const errorData = JSON.parse(errorText);
-          errorMessage = errorData.message || errorData.code || errorMessage;
+          if (response.status === 401) {
+            // Better error message for 401 - credentials issue
+            errorMessage = `WooCommerce API authentication failed (401). Please check your Consumer Key and Consumer Secret have "Read" permissions. Go to WooCommerce → Settings → Advanced → REST API to verify your API keys.`;
+          } else {
+            errorMessage = errorData.message || errorData.code || errorMessage;
+          }
         } catch (e) {
-          errorMessage = `${errorMessage} - ${errorText.substring(0, 200)}`;
+          if (response.status === 401) {
+            errorMessage = `WooCommerce API authentication failed (401). Please check your Consumer Key and Consumer Secret.`;
+          } else {
+            errorMessage = `${errorMessage} - ${errorText.substring(0, 200)}`;
+          }
         }
         throw new Error(errorMessage);
       }
@@ -524,7 +533,24 @@ export const fetchWooCommerceCustomers = async (storeUrl, consumerKey, consumerS
 };
 
 // Convert WooCommerce order to our format
+// Map WooCommerce payment method to our enum
+const mapWooCommercePaymentMethod = (paymentMethod) => {
+  if (!paymentMethod) return 'Prepaid';
+  
+  const method = paymentMethod.toLowerCase();
+  if (method.includes('cod') || method.includes('cash on delivery') || method.includes('cash')) {
+    return 'COD';
+  }
+  return 'Prepaid';
+};
+
 export const convertWooCommerceOrder = (wcOrder) => {
+  // Get email from multiple sources
+  const orderEmail = wcOrder.billing?.email || 
+                     wcOrder.customer?.email || 
+                     wcOrder.email || 
+                     'no-email@placeholder.com'; // Default email if missing
+  
   return {
     wooCommerceOrderId: wcOrder.id?.toString(),
     orderNumber: wcOrder.number?.toString() || wcOrder.id?.toString() || '',
@@ -532,7 +558,7 @@ export const convertWooCommerceOrder = (wcOrder) => {
       name: `${wcOrder.billing?.first_name || ''} ${wcOrder.billing?.last_name || ''}`.trim() || 
              wcOrder.billing?.company || 
              'Guest',
-      email: wcOrder.billing?.email || '',
+      email: orderEmail, // Always provide email (required field)
       phone: wcOrder.billing?.phone || '',
     },
     items: (wcOrder.line_items || []).map(item => ({
@@ -543,7 +569,7 @@ export const convertWooCommerceOrder = (wcOrder) => {
       wooCommerceVariationId: item.variation_id?.toString(),
     })),
     amount: parseFloat(wcOrder.total || 0),
-    paymentMethod: wcOrder.payment_method_title || 'Unknown',
+    paymentMethod: mapWooCommercePaymentMethod(wcOrder.payment_method_title || wcOrder.payment_method),
     status: mapWooCommerceStatusToOurStatus(wcOrder.status),
     placedDate: new Date(wcOrder.date_created),
     deliveredDate: wcOrder.date_completed ? new Date(wcOrder.date_completed) : null,
